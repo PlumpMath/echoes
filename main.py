@@ -1,7 +1,6 @@
 # coding=utf-8
 """A prototype editor for `Echoes of the Infinite Multiverse`."""
 import math
-import time
 
 from collections import deque
 from typing import List
@@ -53,8 +52,7 @@ def tex_coord(x: int, y: int, n: int=4):
 
 
 def tex_coords(top, bottom, side):
-    """ Return a list of the texture squares for the top, bottom and side.
-    """
+    """Return a list of the texture squares for the top, bottom and side."""
     top = tex_coord(*top)
     bottom = tex_coord(*bottom)
     side = tex_coord(*side)
@@ -146,6 +144,7 @@ class Model(object):
         for block in self.world:
             if self.exposed(block):
                 self.show_block(block)
+        self.process_entire_queue()
 
     def save(self):
         """Write the room to a file."""
@@ -247,30 +246,14 @@ class Model(object):
         self._shown.pop(position).delete()
 
     def _enqueue(self, func, *args):
-        """ Add `func` to the internal queue.
-        """
+        """ Add `func` to the internal queue."""
         self.queue.append((func, args))
-
-    def _dequeue(self):
-        """ Pop the top function from the internal queue and call it.
-        """
-        func, args = self.queue.popleft()
-        func(*args)
-
-    def process_queue(self):
-        """ Process the entire queue while taking periodic breaks. This allows
-        the game loop to run smoothly. The queue contains calls to
-        _show_block() and _hide_block() so this method should be called if
-        add_block() or remove_block() was called with immediate=False
-        """
-        start = time.clock()
-        while self.queue and time.clock() - start < 1.0 / TICKS_PER_SEC:
-            self._dequeue()
 
     def process_entire_queue(self):
         """ Process the entire queue with no breaks."""
         while self.queue:
-            self._dequeue()
+            func, args = self.queue.popleft()
+            func(*args)
 
 
 class Window(pyglet.window.Window):
@@ -396,7 +379,6 @@ class Window(pyglet.window.Window):
         """ This method is scheduled to be called repeatedly by the pyglet
         clock.
         """
-        self.model.process_queue()
         m = 8
         dt = min(dt, 0.2)
         for _ in range(m):
@@ -537,8 +519,7 @@ class Window(pyglet.window.Window):
             4, ('v2i', (x - n, y, x + n, y, x, y - n, x, y + n)))
 
     def set_2d(self):
-        """ Configure OpenGL to draw in 2d.
-        """
+        """ Configure OpenGL to draw in 2d."""
         width, height = self.get_size()
         gl.glDisable(gl.GL_DEPTH_TEST)
         gl.glViewport(0, 0, width, height)
@@ -549,8 +530,7 @@ class Window(pyglet.window.Window):
         gl.glLoadIdentity()
 
     def set_3d(self):
-        """ Configure OpenGL to draw in 3d.
-        """
+        """ Configure OpenGL to draw in 3d."""
         width, height = self.get_size()
         gl.glEnable(gl.GL_DEPTH_TEST)
         gl.glViewport(0, 0, width, height)
@@ -567,8 +547,7 @@ class Window(pyglet.window.Window):
         gl.glTranslatef(-x, -y, -z)
 
     def on_draw(self):
-        """ Called by pyglet to draw the canvas.
-        """
+        """ Called by pyglet to draw the canvas."""
         self.clear()
         self.set_3d()
         gl.glColor3d(1, 1, 1)
