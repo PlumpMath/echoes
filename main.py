@@ -1,13 +1,14 @@
 # coding=utf-8
 """A prototype editor for `Echoes of the Infinite Multiverse`."""
 import math
-import random
 import time
 
 from collections import deque
 from typing import List
 
+import pickle
 import pyglet
+import sys
 from pyglet import image
 from pyglet import gl
 from pyglet.graphics import TextureGroup
@@ -19,21 +20,11 @@ IntVector = (int, int, int)
 
 TICKS_PER_SEC = 60
 
-# Size of sectors used to ease block loading.
-SECTOR_SIZE = 16
-
 WALKING_SPEED = 5
 FLYING_SPEED = 15
 
 GRAVITY = 20.0
-MAX_JUMP_HEIGHT = 1.0  # About the height of a block.
-# To derive the formula for calculating jump speed, first solve
-#    v_t = v_0 + a * t
-# for the time at which you achieve maximum height, where a is the acceleration
-# due to gravity and v_t = 0. This gives:
-#    t = - v_0 / a
-# Use t and the desired MAX_JUMP_HEIGHT to solve for v_0 (jump speed) in
-#    s = s_0 + v_0 * t + (a * t^2) / 2
+MAX_JUMP_HEIGHT = 5.0
 JUMP_SPEED = math.sqrt(2 * GRAVITY * MAX_JUMP_HEIGHT)
 TERMINAL_VELOCITY = 50
 
@@ -53,9 +44,8 @@ def cube_vertices(position: IntVector, n: float) -> List[float]:
     ]
 
 
-def tex_coord(x, y, n=4):
-    """ Return the bounding vertices of the texture square.
-    """
+def tex_coord(x: int, y: int, n: int=4):
+    """ Return the bounding vertices of the texture square."""
     m = 1.0 / n
     dx = x * m
     dy = y * m
@@ -77,10 +67,10 @@ def tex_coords(top, bottom, side):
 
 TEXTURE_PATH = 'texture.png'
 
-GRASS = tex_coords((1, 0), (0, 1), (0, 0))
-SAND = tex_coords((1, 1), (1, 1), (1, 1))
-BRICK = tex_coords((2, 0), (2, 0), (2, 0))
-STONE = tex_coords((2, 1), (2, 1), (2, 1))
+MISSILE_BLOCK = tex_coords((1, 0), (0, 1), (0, 0))
+HAZARD_BLOCK = tex_coords((1, 1), (1, 1), (1, 1))
+SOLID_BLOCK = tex_coords((2, 0), (2, 0), (2, 0))
+BOUNDARY_BLOCK = tex_coords((2, 1), (2, 1), (2, 1))
 
 FACES = [
     (0, 1, 0),
@@ -101,15 +91,10 @@ def normalize(position: Vector) -> IntVector:
     return x, y, z
 
 
-def sectorize(position: Vector) -> IntVector:
-    """ Returns a tuple representing the sector for the given `position`."""
-    x, y, z = normalize(position)
-    x, y, z = x // SECTOR_SIZE, y // SECTOR_SIZE, z // SECTOR_SIZE
-    return x, 0, z
-
-
 class Model(object):
     """A drawable object."""
+    filepath = "untitled.pkl"
+
     def __init__(self):
         # A Batch is a collection of vertex lists for batched rendering.
         self.batch = pyglet.graphics.Batch()
@@ -124,11 +109,8 @@ class Model(object):
         # Same mapping as `world` but only contains blocks that are shown.
         self.shown = {}
 
-        # Mapping from position to a pyglet `VertextList` for all shown blocks.
+        # Mapping from position to a pyglet `VertexList` for all shown blocks.
         self._shown = {}
-
-        # Mapping from sector to a list of positions inside that sector.
-        self.sectors = {}
 
         # Simple function queue implementation. The queue is populated with
         # _show_block() and _hide_block() calls
@@ -136,41 +118,39 @@ class Model(object):
 
         self._initialize()
 
-    def _initialize(self):
-        """ Initialize the world by placing all the blocks.
-        """
-        n = 80  # 1/2 width and height of world
-        s = 1  # step size
-        y = 0  # initial y height
-        for x in range(-n, n + 1, s):
-            for z in range(-n, n + 1, s):
-                # create a layer stone an grass everywhere.
-                self.add_block((x, y - 2, z), GRASS, immediate=False)
-                self.add_block((x, y - 3, z), STONE, immediate=False)
-                if x in (-n, n) or z in (-n, n):
-                    # create outer walls.
-                    for dy in range(-2, 3):
-                        self.add_block((x, y + dy, z), STONE, immediate=False)
+    def _create_boundary_blocks(self):
+        n = 25  # 1/2 width and height of world
+        for x in range(-n, n + 1):
+            for z in range(-n, n + 1):
+                # create a boundary floor and ceiling
+                self.add_block((x, -n, z), BOUNDARY_BLOCK, immediate=False)
+                self.add_block((x, n + 1, z), BOUNDARY_BLOCK, immediate=False)
 
-        # generate the hills randomly
-        o = n - 10
-        for _ in range(120):
-            a = random.randint(-o, o)  # x position of the hill
-            b = random.randint(-o, o)  # z position of the hill
-            c = -1  # base of the hill
-            h = random.randint(1, 6)  # height of the hill
-            s = random.randint(4, 8)  # 2 * s is the side length of the hill
-            d = 1  # how quickly to taper off the hills
-            t = random.choice([GRASS, SAND, BRICK])
-            for y in range(c, c + h):
-                for x in range(a - s, a + s + 1):
-                    for z in range(b - s, b + s + 1):
-                        if (x - a) ** 2 + (z - b) ** 2 > (s + 1) ** 2:
-                            continue
-                        if (x - 0) ** 2 + (z - 0) ** 2 < 5 ** 2:
-                            continue
-                        self.add_block((x, y, z), t, immediate=False)
-                s -= d  # decrement side length so hills taper off
+                # create outer boundary walls
+                if x in (-n, n) or z in (-n, n):
+                    for dy in range(-n, n + 1):
+                        self.add_block((x, dy, z), BOUNDARY_BLOCK, immediate=False)
+
+    def _initialize(self) -> None:
+        """ Initialize the world by placing all the blocks."""
+        # If loading from a file, pull in those blocks.
+        if len(sys.argv) > 1:
+            self.filepath = sys.argv[1]
+        try:
+            with open(self.filepath, 'rb') as infile:
+                self.world = pickle.load(infile)
+        except FileNotFoundError:
+            self._create_boundary_blocks()
+
+        # Show all the blocks that have just been created.
+        for block in self.world:
+            if self.exposed(block):
+                self.show_block(block)
+
+    def save(self):
+        """Write the room to a file."""
+        with open(self.filepath, 'wb') as outfile:
+            pickle.dump(self.world, outfile)
 
     def hit_test(self, position: Vector, vector: Vector,
                  max_distance: int=8) -> tuple:
@@ -206,7 +186,6 @@ class Model(object):
         if position in self.world:
             self.remove_block(position, immediate)
         self.world[position] = texture
-        self.sectors.setdefault(sectorize(position), []).append(position)
         if immediate:
             if self.exposed(position):
                 self.show_block(position)
@@ -215,7 +194,6 @@ class Model(object):
     def remove_block(self, position: IntVector, immediate: bool=True):
         """Remove the block at the given `position`."""
         del self.world[position]
-        self.sectors[sectorize(position)].remove(position)
         if immediate:
             if position in self.shown:
                 self.hide_block(position)
@@ -261,61 +239,12 @@ class Model(object):
             ('v3f/static', vertex_data),
             ('t2f/static', texture_data))
 
-    def hide_block(self, position: IntVector, immediate: bool=True):
+    def hide_block(self, position: IntVector):
         """ Hide the block at the given `position`. Hiding does not remove the
         block from the world.
         """
         self.shown.pop(position)
-        if immediate:
-            self._hide_block(position)
-        else:
-            self._enqueue(self._hide_block, position)
-
-    def _hide_block(self, position):
-        """ Private implementation of the 'hide_block()` method."""
         self._shown.pop(position).delete()
-
-    def show_sector(self, sector):
-        """ Ensure all blocks in the given sector that should be shown are
-        drawn to the canvas.
-        """
-        for position in self.sectors.get(sector, []):
-            if position not in self.shown and self.exposed(position):
-                self.show_block(position, False)
-
-    def hide_sector(self, sector):
-        """ Ensure all blocks in the given sector that should be hidden are
-        removed from the canvas.
-        """
-        for position in self.sectors.get(sector, []):
-            if position in self.shown:
-                self.hide_block(position, False)
-
-    def change_sectors(self, before, after):
-        """ Move from sector `before` to sector `after`. A sector is a
-        contiguous x, y sub-region of world. Sectors are used to speed up
-        world rendering.
-        """
-        before_set = set()
-        after_set = set()
-        pad = 4
-        for dx in range(-pad, pad + 1):
-            for dy in [0]:  # range(-pad, pad + 1):
-                for dz in range(-pad, pad + 1):
-                    if dx ** 2 + dy ** 2 + dz ** 2 > (pad + 1) ** 2:
-                        continue
-                    if before:
-                        x, y, z = before
-                        before_set.add((x + dx, y + dy, z + dz))
-                    if after:
-                        x, y, z = after
-                        after_set.add((x + dx, y + dy, z + dz))
-        show = after_set - before_set
-        hide = before_set - after_set
-        for sector in show:
-            self.show_sector(sector)
-        for sector in hide:
-            self.hide_sector(sector)
 
     def _enqueue(self, func, *args):
         """ Add `func` to the internal queue.
@@ -376,9 +305,6 @@ class Window(pyglet.window.Window):
         # 90 (looking straight up). The horizontal rotation range is unbounded.
         self.rotation = (0, 0)
 
-        # Which sector the player is currently in.
-        self.sector = None
-
         # The crosshairs at the center of the screen.
         self.reticle = None
 
@@ -386,7 +312,7 @@ class Window(pyglet.window.Window):
         self.dy = 0
 
         # A list of blocks the player can place. Hit num keys to cycle.
-        self.inventory = [BRICK, GRASS, SAND]
+        self.inventory = [SOLID_BLOCK, MISSILE_BLOCK, HAZARD_BLOCK]
 
         # The current block the user can place. Hit num keys to cycle.
         self.block = self.inventory[0]
@@ -471,12 +397,6 @@ class Window(pyglet.window.Window):
         clock.
         """
         self.model.process_queue()
-        sector = sectorize(self.position)
-        if sector != self.sector:
-            self.model.change_sectors(self.sector, sector)
-            if self.sector is None:
-                self.model.process_entire_queue()
-            self.sector = sector
         m = 8
         dt = min(dt, 0.2)
         for _ in range(m):
@@ -552,7 +472,7 @@ class Window(pyglet.window.Window):
                     self.model.add_block(previous, self.block)
             elif button == pyglet.window.mouse.LEFT and block:
                 texture = self.model.world[block]
-                if texture != STONE:
+                if texture != BOUNDARY_BLOCK:
                     self.model.remove_block(block)
         else:
             self.set_exclusive_mouse(True)
@@ -585,6 +505,8 @@ class Window(pyglet.window.Window):
             self.set_exclusive_mouse(False)
         elif symbol == key.TAB:
             self.flying = not self.flying
+        elif symbol == key.ENTER:
+            self.model.save()
         elif symbol in self.num_keys:
             index = (symbol - self.num_keys[0]) % len(self.inventory)
             self.block = self.inventory[index]
@@ -603,8 +525,7 @@ class Window(pyglet.window.Window):
             self.strafe[1] -= 1
 
     def on_resize(self, width, height):
-        """ Called when the window is resized to a new `width` and `height`.
-        """
+        """ Called when the window is resized to a new `width` and `height`."""
         # label
         self.label.y = height - 10
         # reticle
@@ -613,8 +534,7 @@ class Window(pyglet.window.Window):
         x, y = self.width // 2, self.height // 2
         n = 10
         self.reticle = pyglet.graphics.vertex_list(
-            4, ('v2i', (x - n, y, x + n, y, x, y - n, x, y + n))
-        )
+            4, ('v2i', (x - n, y, x + n, y, x, y - n, x, y + n)))
 
     def set_2d(self):
         """ Configure OpenGL to draw in 2d.
