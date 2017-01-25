@@ -104,9 +104,6 @@ class Model(object):
         # This defines all the blocks that are currently in the world.
         self.world = {}
 
-        # Same mapping as `world` but only contains blocks that are shown.
-        self.shown = {}
-
         # Mapping from position to a pyglet `VertexList` for all shown blocks.
         self._shown = {}
 
@@ -183,20 +180,19 @@ class Model(object):
                   immediate: bool=True):
         """Add a block with the given `texture` and `position` to the world."""
         if position in self.world:
-            self.remove_block(position, immediate)
+            raise Exception("Block already exists there.")
         self.world[position] = texture
         if immediate:
             if self.exposed(position):
                 self.show_block(position)
             self.check_neighbors(position)
 
-    def remove_block(self, position: IntVector, immediate: bool=True):
+    def remove_block(self, position: IntVector):
         """Remove the block at the given `position`."""
         del self.world[position]
-        if immediate:
-            if position in self.shown:
-                self.hide_block(position)
-            self.check_neighbors(position)
+        if position in self._shown:
+            self.hide_block(position)
+        self.check_neighbors(position)
 
     def check_neighbors(self, position):
         """ Check all blocks surrounding `position` and ensure their visual
@@ -210,10 +206,10 @@ class Model(object):
             if key not in self.world:
                 continue
             if self.exposed(key):
-                if key not in self.shown:
+                if key not in self._shown:
                     self.show_block(key)
             else:
-                if key in self.shown:
+                if key in self._shown:
                     self.hide_block(key)
 
     def show_block(self, position: IntVector, immediate: bool=True):
@@ -221,7 +217,6 @@ class Model(object):
         block has already been added with add_block()
         """
         texture = self.world[position]
-        self.shown[position] = texture
         if immediate:
             self._show_block(position, texture)
         else:
@@ -242,7 +237,6 @@ class Model(object):
         """ Hide the block at the given `position`. Hiding does not remove the
         block from the world.
         """
-        self.shown.pop(position)
         self._shown.pop(position).delete()
 
     def _enqueue(self, func, *args):
@@ -322,7 +316,7 @@ class Window(pyglet.window.Window):
         """ If `exclusive` is True, the game will capture the mouse, if False
         the game will ignore the mouse.
         """
-        # TODO: This is better as a getter/setter for self.exclusive
+        # TODO: This would be better as a getter/setter for self.exclusive
         super().set_exclusive_mouse(exclusive)
         self.exclusive = exclusive
 
