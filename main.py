@@ -3,15 +3,20 @@
 import math
 
 from collections import deque
-from typing import List
+from typing import List, Tuple
 
 import pickle
-import pyglet
 import sys
-from pyglet import image
-from pyglet import gl
-from pyglet.graphics import TextureGroup
-from pyglet.window import key, mouse
+
+from direct.showbase.ShowBase import ShowBase
+from direct.task import Task
+from panda3d.core import Geom
+from panda3d.core import GeomNode
+from panda3d.core import GeomTriangles
+from panda3d.core import GeomVertexData
+from panda3d.core import GeomVertexFormat
+from panda3d.core import GeomVertexWriter
+from panda3d.core import Vec3D
 
 # Typing convenience
 Vector = (float, float, float)
@@ -30,17 +35,41 @@ TERMINAL_VELOCITY = 50
 PLAYER_HEIGHT = 2
 
 
-def cube_vertices(position: IntVector, n: float) -> List[float]:
+def cube_vertices(position: Vec3D, n: float) -> Tuple:
     """ Return the vertices of the cube at position x, y, z with size 2*n."""
     x, y, z = position
-    return [
-        x-n, y+n, z-n, x-n, y+n, z+n, x+n, y+n, z+n, x+n, y+n, z-n,  # top
-        x-n, y-n, z-n, x+n, y-n, z-n, x+n, y-n, z+n, x-n, y-n, z+n,  # bottom
-        x-n, y-n, z-n, x-n, y-n, z+n, x-n, y+n, z+n, x-n, y+n, z-n,  # left
-        x+n, y-n, z+n, x+n, y-n, z-n, x+n, y+n, z-n, x+n, y+n, z+n,  # right
-        x-n, y-n, z+n, x+n, y-n, z+n, x+n, y+n, z+n, x-n, y+n, z+n,  # front
-        x+n, y-n, z-n, x-n, y-n, z-n, x-n, y+n, z-n, x+n, y+n, z-n,  # back
-    ]
+    return (
+        # top
+        (x-n, y+n, z-n),
+        (x-n, y+n, z+n),
+        (x+n, y+n, z+n),
+        (x+n, y+n, z-n),
+        # bottom
+        (x-n, y-n, z-n),
+        (x+n, y-n, z-n),
+        (x+n, y-n, z+n),
+        (x-n, y-n, z+n),
+        # left
+        (x-n, y-n, z-n),
+        (x-n, y-n, z+n),
+        (x-n, y+n, z+n),
+        (x-n, y+n, z-n),
+        # right
+        (x+n, y-n, z+n),
+        (x+n, y-n, z-n),
+        (x+n, y+n, z-n),
+        (x+n, y+n, z+n),
+        # front
+        (x-n, y-n, z+n),
+        (x+n, y-n, z+n),
+        (x+n, y+n, z+n),
+        (x-n, y+n, z+n),
+        # back
+        (x+n, y-n, z-n),
+        (x-n, y-n, z-n),
+        (x-n, y+n, z-n),
+        (x+n, y+n, z-n),
+    )
 
 
 def tex_coord(x: int, y: int, n: int=4):
@@ -95,10 +124,10 @@ class Model(object):
 
     def __init__(self):
         # A Batch is a collection of vertex lists for batched rendering.
-        self.batch = pyglet.graphics.Batch()
+        # self.batch = pyglet.graphics.Batch()
 
         # A TextureGroup manages an OpenGL texture.
-        self.group = TextureGroup(image.load(TEXTURE_PATH).get_texture())
+        # self.group = TextureGroup(image.load(TEXTURE_PATH).get_texture())
 
         # A mapping from position to the texture of the block at that position.
         # This defines all the blocks that are currently in the world.
@@ -106,6 +135,26 @@ class Model(object):
 
         # Mapping from position to a pyglet `VertexList` for all shown blocks.
         self._shown = {}
+
+        # PANDA3D Procedural geometry
+        self.vertex_format = GeomVertexFormat.getV3n3t2()
+
+        self.vertex_data = GeomVertexData(
+            'room', self.vertex_format, Geom.UH_dynamic)
+        # self.vertex_data.setNumRows(4)  # TODO: For performance
+        self.vertex = GeomVertexWriter(self.vertex_data, 'vertex')
+        self.normal = GeomVertexWriter(self.vertex_data, 'normal')
+        # self.color = GeomVertexWriter(self.vertex_data, 'color')
+        self.texcoord = GeomVertexWriter(self.vertex_data, 'texcoord')
+        self.prim = GeomTriangles(Geom.UHStatic)
+
+        self.geom = Geom(self.vertex_data)
+        self.geom.addPrimitive(self.prim)
+
+        self.node = GeomNode('gnode')
+        self.node.addGeom(self.geom)
+
+        self.nodePath = render.attachNewNode(self.node)
 
         # Simple function queue implementation. The queue is populated with
         # _show_block() and _hide_block() calls
@@ -228,10 +277,21 @@ class Model(object):
         texture_data = list(texture)
         # create vertex list
         # FIXME Maybe `add_indexed()` should be used instead
-        self._shown[position] = self.batch.add(
-            24, gl.GL_QUADS, self.group,
-            ('v3f/static', vertex_data),
-            ('t2f/static', texture_data))
+        i = 0
+        for vertex in vertex_data:
+            self.vertex.addData3f(*vertex)
+            self.normal.addData3f(0, 0, 1)
+            # self.color.addData4f(0, 0, 1, 1)
+            # self.texcoord.addData2f(*texture_data)
+            self.prim.addVertex(i)
+            self.prim.addVertex(i+1)
+            self.prim.addVertex(i+2)
+            self.prim.close_primitive()
+            i += 3
+            # self._shown[position] = self.batch.add(
+            #     24, gl.GL_QUADS, self.group,
+            #     ('v3f/static', vertex_data),
+            #     ('t2f/static', texture_data))
 
     def hide_block(self, position: IntVector):
         """ Hide the block at the given `position`. Hiding does not remove the
@@ -250,7 +310,7 @@ class Model(object):
             func(*args)
 
 
-class Window(pyglet.window.Window):
+class Window(ShowBase):
     """Implement the code that creates the window."""
 
     def __init__(self, *args, **kwargs):
@@ -295,30 +355,31 @@ class Window(pyglet.window.Window):
         self.block = self.inventory[0]
 
         # Convenience list of num keys.
-        self.num_keys = [
-            key._1, key._2, key._3, key._4, key._5,
-            key._6, key._7, key._8, key._9, key._0]
+        # self.num_keys = [
+        #     key._1, key._2, key._3, key._4, key._5,
+        #     key._6, key._7, key._8, key._9, key._0]
 
         # Instance of the model that handles the world.
         self.model = Model()
 
         # The label that is displayed in the top left of the canvas.
-        self.label = pyglet.text.Label(
-            '', font_name='Ubuntu', font_size=18,
-            x=10, y=self.height - 10, anchor_x='left', anchor_y='top',
-            color=(0, 0, 0, 255))
+        # self.label = pyglet.text.Label(
+        #     '', font_name='Ubuntu', font_size=18,
+        #     x=10, y=self.height - 10, anchor_x='left', anchor_y='top',
+        #     color=(0, 0, 0, 255))
 
         # This call schedules the `update()` method to be called
         # TICKS_PER_SEC. This is the main game event loop.
-        pyglet.clock.schedule_interval(self.update, 1.0 / TICKS_PER_SEC)
+        # pyglet.clock.schedule_interval(self.update, 1.0 / TICKS_PER_SEC)
+        self.update_task = self.task_mgr.add(self.update, 'update_task')
 
-    def set_exclusive_mouse(self, exclusive: bool):
-        """ If `exclusive` is True, the game will capture the mouse, if False
-        the game will ignore the mouse.
-        """
-        # TODO: This would be better as a getter/setter for self.exclusive
-        super().set_exclusive_mouse(exclusive)
-        self.exclusive = exclusive
+    # def set_exclusive_mouse(self, exclusive: bool):
+    #     """ If `exclusive` is True, the game will capture the mouse, if False
+    #     the game will ignore the mouse.
+    #     """
+    #     # TODO: This would be better as a getter/setter for self.exclusive
+    #     super().set_exclusive_mouse(exclusive)
+    #     self.exclusive = exclusive
 
     def get_sight_vector(self) -> Vector:
         """ Returns the current line of sight vector indicating the direction
@@ -369,10 +430,11 @@ class Window(pyglet.window.Window):
             dz = 0.0
         return dx, dy, dz
 
-    def update(self, dt: float):
+    def update(self, task: Task):
         """ This method is scheduled to be called repeatedly by the pyglet
         clock.
         """
+        dt = 1/60  # TODO: THIS IS SO WRONG
         m = 8
         dt = min(dt, 0.2)
         for _ in range(m):
@@ -598,30 +660,30 @@ def setup_fog():
 
 def setup():
     """ Basic OpenGL configuration."""
-    # Set the color of "clear", i.e. the sky, in rgba.
-    gl.glClearColor(0.5, 0.69, 1.0, 1)
-    # Enable culling (not rendering) of back-facing facets -- facets that aren't
-    # visible to you.
-    gl.glEnable(gl.GL_CULL_FACE)
-    # Set the texture minification/magnification function to GL_NEAREST (nearest
-    # in Manhattan distance) to the specified texture coordinates. GL_NEAREST
-    # "is generally faster than GL_LINEAR, but it can produce textured images
-    # with sharper edges because the transition between texture elements is not
-    # as smooth."
-    gl.glTexParameteri(
-        gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
-    gl.glTexParameteri(
-        gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
-    setup_fog()
+    # # Set the color of "clear", i.e. the sky, in rgba.
+    # gl.glClearColor(0.5, 0.69, 1.0, 1)
+    # # Enable culling (not rendering) of back-facing facets -- facets that aren't
+    # # visible to you.
+    # gl.glEnable(gl.GL_CULL_FACE)
+    # # Set the texture minification/magnification function to GL_NEAREST (nearest
+    # # in Manhattan distance) to the specified texture coordinates. GL_NEAREST
+    # # "is generally faster than GL_LINEAR, but it can produce textured images
+    # # with sharper edges because the transition between texture elements is not
+    # # as smooth."
+    # gl.glTexParameteri(
+    #     gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+    # gl.glTexParameteri(
+    #     gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
+    # setup_fog()
 
 
 def main():
     """Run the program."""
-    window = Window(width=800, height=600, caption='Editor', resizable=True)
+    window = Window()
     # Hide the mouse cursor and prevent the mouse from leaving the window.
-    window.set_exclusive_mouse(True)
+    # window.set_exclusive_mouse(True)
     setup()
-    pyglet.app.run()
+    window.run()
 
 
 if __name__ == '__main__':
