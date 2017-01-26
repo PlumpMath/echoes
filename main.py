@@ -8,11 +8,12 @@ from typing import List, Tuple
 import pickle
 import sys
 
-from direct.showbase.ShowBase import ShowBase
+import itertools
+from direct.showbase.ShowBase import ShowBase, SamplerState
 from direct.task import Task
 from panda3d.core import Geom
 from panda3d.core import GeomNode
-from panda3d.core import GeomTriangles
+from panda3d.core import GeomTristrips
 from panda3d.core import GeomVertexData
 from panda3d.core import GeomVertexFormat
 from panda3d.core import GeomVertexWriter
@@ -42,33 +43,33 @@ def cube_vertices(position: Vec3D, n: float) -> Tuple:
         # top
         (x-n, y+n, z-n),
         (x-n, y+n, z+n),
-        (x+n, y+n, z+n),
         (x+n, y+n, z-n),
+        (x+n, y+n, z+n),
         # bottom
         (x-n, y-n, z-n),
         (x+n, y-n, z-n),
-        (x+n, y-n, z+n),
         (x-n, y-n, z+n),
+        (x+n, y-n, z+n),
         # left
         (x-n, y-n, z-n),
         (x-n, y-n, z+n),
-        (x-n, y+n, z+n),
         (x-n, y+n, z-n),
+        (x-n, y+n, z+n),
         # right
         (x+n, y-n, z+n),
         (x+n, y-n, z-n),
-        (x+n, y+n, z-n),
         (x+n, y+n, z+n),
+        (x+n, y+n, z-n),
         # front
         (x-n, y-n, z+n),
         (x+n, y-n, z+n),
-        (x+n, y+n, z+n),
         (x-n, y+n, z+n),
+        (x+n, y+n, z+n),
         # back
         (x+n, y-n, z-n),
         (x-n, y-n, z-n),
-        (x-n, y+n, z-n),
         (x+n, y+n, z-n),
+        (x-n, y+n, z-n),
     )
 
 
@@ -77,7 +78,7 @@ def tex_coord(x: int, y: int, n: int=4):
     m = 1.0 / n
     dx = x * m
     dy = y * m
-    return dx, dy, dx + m, dy, dx + m, dy + m, dx, dy + m
+    return (dx, dy), (dx + m, dy), (dx, dy + m), (dx + m, dy + m)
 
 
 def tex_coords(top, bottom, side):
@@ -85,11 +86,7 @@ def tex_coords(top, bottom, side):
     top = tex_coord(*top)
     bottom = tex_coord(*bottom)
     side = tex_coord(*side)
-    result = []
-    result.extend(top)
-    result.extend(bottom)
-    result.extend(side * 4)
-    return result
+    return tuple(itertools.chain(top, bottom, side, side, side, side))
 
 
 TEXTURE_PATH = 'texture.png'
@@ -142,25 +139,28 @@ class Model(object):
         self.vertex_data = GeomVertexData(
             'room', self.vertex_format, Geom.UH_dynamic)
         # self.vertex_data.setNumRows(4)  # TODO: For performance
+        self.vertex_count = 0
         self.vertex = GeomVertexWriter(self.vertex_data, 'vertex')
         self.normal = GeomVertexWriter(self.vertex_data, 'normal')
-        # self.color = GeomVertexWriter(self.vertex_data, 'color')
         self.texcoord = GeomVertexWriter(self.vertex_data, 'texcoord')
-        self.prim = GeomTriangles(Geom.UHStatic)
-
-        self.geom = Geom(self.vertex_data)
-        self.geom.addPrimitive(self.prim)
-
-        self.node = GeomNode('gnode')
-        self.node.addGeom(self.geom)
-
-        self.nodePath = render.attachNewNode(self.node)
+        self.prim = GeomTristrips(Geom.UHStatic)
 
         # Simple function queue implementation. The queue is populated with
         # _show_block() and _hide_block() calls
         self.queue = deque()
 
         self._initialize()
+
+        # Create the NodePath
+        self.geom = Geom(self.vertex_data)
+        self.geom.addPrimitive(self.prim)
+        self.node = GeomNode('gnode')
+        self.node.addGeom(self.geom)
+        self.nodePath = render.attachNewNode(self.node)
+        dungeon_tex = loader.loadTexture("texture.png")
+        dungeon_tex.setMagfilter(SamplerState.FT_nearest)
+        dungeon_tex.setMinfilter(SamplerState.FT_nearest)
+        self.nodePath.setTexture(dungeon_tex)
 
     def _create_boundary_blocks(self):
         n = 25  # 1/2 width and height of world
@@ -229,7 +229,7 @@ class Model(object):
                   immediate: bool=True):
         """Add a block with the given `texture` and `position` to the world."""
         if position in self.world:
-            raise Exception("Block already exists there.")
+            return  # raise Exception("Block already exists there.")
         self.world[position] = texture
         if immediate:
             if self.exposed(position):
@@ -271,27 +271,31 @@ class Model(object):
         else:
             self._enqueue(self._show_block, position, texture)
 
-    def _show_block(self, position: IntVector, texture: tuple):
+    def _show_block(self, position: IntVector, texture_data: tuple):
         """ Private implementation of the `show_block()` method."""
+        print("Adding cube:", position)
         vertex_data = cube_vertices(position, 0.5)
-        texture_data = list(texture)
         # create vertex list
         # FIXME Maybe `add_indexed()` should be used instead
-        i = 0
+
         for vertex in vertex_data:
             self.vertex.addData3f(*vertex)
             self.normal.addData3f(0, 0, 1)
-            # self.color.addData4f(0, 0, 1, 1)
-            # self.texcoord.addData2f(*texture_data)
-            self.prim.addVertex(i)
-            self.prim.addVertex(i+1)
-            self.prim.addVertex(i+2)
-            self.prim.close_primitive()
-            i += 3
+            self.prim.addVertex(self.vertex_count)
+            # self.prim.addVertex(i+1)
+            # self.prim.addVertex(i+2)
+            if not (self.vertex_count+1) % 4:
+                self.prim.close_primitive()
+            self.vertex_count += 1
+
+            # TODO: Remove old code
             # self._shown[position] = self.batch.add(
             #     24, gl.GL_QUADS, self.group,
             #     ('v3f/static', vertex_data),
             #     ('t2f/static', texture_data))
+
+        for tex in texture_data:
+            self.texcoord.addData2f(*tex)
 
     def hide_block(self, position: IntVector):
         """ Hide the block at the given `position`. Hiding does not remove the
