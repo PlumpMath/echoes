@@ -3,13 +3,14 @@
 import math
 
 from collections import deque
-from typing import List, Tuple
+from typing import Tuple
 
 import pickle
 import sys
 
 import itertools
-from direct.showbase.ShowBase import ShowBase, SamplerState
+from direct.showbase.ShowBase import ShowBase, SamplerState, TextureStage, Fog, \
+    Spotlight, Vec4, AmbientLight, PointLight, GeomVertexArrayFormat
 from direct.task import Task
 from panda3d.core import Geom
 from panda3d.core import GeomNode
@@ -20,6 +21,8 @@ from panda3d.core import GeomVertexWriter
 from panda3d.core import Vec3D
 
 # Typing convenience
+import voxel
+
 Vector = (float, float, float)
 IntVector = (int, int, int)
 
@@ -34,43 +37,6 @@ JUMP_SPEED = math.sqrt(2 * GRAVITY * MAX_JUMP_HEIGHT)
 TERMINAL_VELOCITY = 50
 
 PLAYER_HEIGHT = 2
-
-
-def cube_vertices(position: Vec3D, n: float) -> Tuple:
-    """ Return the vertices of the cube at position x, y, z with size 2*n."""
-    x, y, z = position
-    return (
-        # top
-        (x-n, y+n, z-n),
-        (x-n, y+n, z+n),
-        (x+n, y+n, z-n),
-        (x+n, y+n, z+n),
-        # bottom
-        (x-n, y-n, z-n),
-        (x+n, y-n, z-n),
-        (x-n, y-n, z+n),
-        (x+n, y-n, z+n),
-        # left
-        (x-n, y-n, z-n),
-        (x-n, y-n, z+n),
-        (x-n, y+n, z-n),
-        (x-n, y+n, z+n),
-        # right
-        (x+n, y-n, z+n),
-        (x+n, y-n, z-n),
-        (x+n, y+n, z+n),
-        (x+n, y+n, z-n),
-        # front
-        (x-n, y-n, z+n),
-        (x+n, y-n, z+n),
-        (x-n, y+n, z+n),
-        (x+n, y+n, z+n),
-        # back
-        (x+n, y-n, z-n),
-        (x-n, y-n, z-n),
-        (x+n, y+n, z-n),
-        (x-n, y+n, z-n),
-    )
 
 
 def tex_coord(x: int, y: int, n: int=4):
@@ -134,6 +100,13 @@ class Model(object):
         self._shown = {}
 
         # PANDA3D Procedural geometry
+        array = GeomVertexArrayFormat()
+        array.addColumn("vertex", 3, Geom.NTFloat32, Geom.CPoint)
+        array.addColumn("normal", 3, Geom.NTFloat32, Geom.CPoint)
+        array.addColumn("tangent", 3, Geom.NTFloat32, Geom.CPoint)
+        array.addColumn("binormal", 3, Geom.NTFloat32, Geom.CPoint)
+        array.addColumn("texcoord", 2, Geom.NTFloat32, Geom.CTexcoord)
+
         self.vertex_format = GeomVertexFormat.getV3n3t2()
 
         self.vertex_data = GeomVertexData(
@@ -157,13 +130,21 @@ class Model(object):
         self.node = GeomNode('gnode')
         self.node.addGeom(self.geom)
         self.nodePath = render.attachNewNode(self.node)
+
+        # Set Texture
         dungeon_tex = loader.loadTexture("texture.png")
         dungeon_tex.setMagfilter(SamplerState.FT_nearest)
         dungeon_tex.setMinfilter(SamplerState.FT_nearest)
         self.nodePath.setTexture(dungeon_tex)
 
+        # Set Normal Map
+        normal_tex = loader.loadTexture("normal_rocks.png")
+        ts = TextureStage('ts')
+        ts.setMode(TextureStage.MNormal)
+        self.nodePath.setTexture(ts, normal_tex)
+
     def _create_boundary_blocks(self):
-        n = 25  # 1/2 width and height of world
+        n = 10  # 1/2 width and height of world
         for x in range(-n, n + 1):
             for z in range(-n, n + 1):
                 # create a boundary floor and ceiling
@@ -177,6 +158,8 @@ class Model(object):
 
     def _initialize(self) -> None:
         """ Initialize the world by placing all the blocks."""
+        self.build_lighting()
+
         # If loading from a file, pull in those blocks.
         if len(sys.argv) > 1:
             self.filepath = sys.argv[1]
@@ -191,6 +174,36 @@ class Model(object):
             if self.exposed(block):
                 self.show_block(block)
         self.process_entire_queue()
+
+    def build_lighting(self):
+        # Fog
+        exp_fog = Fog("scene-wide-fog")
+        exp_fog.setColor(0.0, 0.0, 0.0)
+        exp_fog.setExpDensity(0.01)
+        render.setFog(exp_fog)
+        # self.setBackgroundColor(0, 0, 0)
+
+        # Lights
+        spotlight = Spotlight("spotlight")
+        spotlight.setColor(Vec4(1, 1, 1, 1))
+        # spotlight.setShadowCaster(True, 2048, 2048)
+        spotlight_node = render.attachNewNode(spotlight)
+        spotlight_node.setPos(11, 11, 11)
+        spotlight_node.lookAt(0, 0, 0)
+        render.setLight(spotlight_node)
+
+        point = PointLight("point")
+        point.set_color(Vec4(1, 1, 1, 1))
+        point_node = render.attachNewNode(point)
+        point_node.set_pos(-11, -11, -11)
+        render.setLight(point_node)
+
+        # ambient_light = AmbientLight("ambientLight")
+        # ambient_light.setColor(Vec4(.25, .25, .25, 1))
+        # render.setLight(render.attachNewNode(ambient_light))
+
+        # Enable the shader generator for the receiving nodes
+        render.setShaderAuto()
 
     def save(self):
         """Write the room to a file."""
@@ -274,7 +287,8 @@ class Model(object):
     def _show_block(self, position: IntVector, texture_data: tuple):
         """ Private implementation of the `show_block()` method."""
         print("Adding cube:", position)
-        vertex_data = cube_vertices(position, 0.5)
+        vertex_data = voxel.make_vertices(position)
+
         # create vertex list
         # FIXME Maybe `add_indexed()` should be used instead
 
@@ -282,10 +296,8 @@ class Model(object):
             self.vertex.addData3f(*vertex)
             self.normal.addData3f(0, 0, 1)
             self.prim.addVertex(self.vertex_count)
-            # self.prim.addVertex(i+1)
-            # self.prim.addVertex(i+2)
             if not (self.vertex_count+1) % 4:
-                self.prim.close_primitive()
+                self.prim.close_primitive()  # TODO: This is so slow
             self.vertex_count += 1
 
             # TODO: Remove old code
