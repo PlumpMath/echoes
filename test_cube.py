@@ -1,8 +1,7 @@
 # coding=utf-8
 """Test a procedural render of a cube in Panda3D."""
 from direct.showbase.ShowBase import ShowBase
-from panda3d.core import Geom, GeomNode, GeomTriangles, SamplerState, Fog, \
-    Spotlight, Vec4, PointLight, AmbientLight, Vec3D
+from panda3d.core import Fog, Spotlight, Vec4, PointLight, AmbientLight, Vec3D
 
 import voxel
 
@@ -49,38 +48,7 @@ class Window(ShowBase):
 
     def make_cube(self):
         """Generate a cube model."""
-
-        # Write data to the buffers
-        for v in voxel.make_vertices(Vec3D(0, 0, 0)):
-            self.world._vertex_w.addData3f(*v)
-        for v in voxel.make_normals():
-            self.world._normal_w.addData3f(*v)
-        for tex in voxel.make_texcoords():
-            self.world._texcoord_w.addData2f(*tex)
-
-        # Add the indexes to a primitive
-        prim = GeomTriangles(Geom.UHStatic)
-        for i in voxel.make_indices():
-            prim.addVertex(i)
-
-        # Create the NodePath
-        geom = Geom(self.world._vdata)
-        geom.addPrimitive(prim)
-        node = GeomNode('geom_node')
-        node.addGeom(geom)
-        node_path = self.render.attachNewNode(node)
-
-        # Set Texture
-        dungeon_tex = self.loader.loadTexture("diffuse.png")
-        dungeon_tex.setMagfilter(SamplerState.FT_nearest)
-        dungeon_tex.setMinfilter(SamplerState.FT_nearest)
-        node_path.setTexture(dungeon_tex)
-
-        # Set Normal Map
-        # normal_tex = self.loader.loadTexture("normal_rocks.png")
-        # ts = TextureStage('ts')
-        # ts.setMode(TextureStage.MNormal)
-        # node_path.setTexture(ts, normal_tex)
+        self.world.place_voxel("", Vec3D(0, 0, 0))
 
 
 def main():

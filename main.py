@@ -3,14 +3,13 @@
 import math
 
 from collections import deque
-from typing import Tuple
 
 import pickle
 import sys
 
 import itertools
 from direct.showbase.ShowBase import ShowBase, SamplerState, TextureStage, Fog, \
-    Spotlight, Vec4, AmbientLight, PointLight, GeomVertexArrayFormat
+    Spotlight, Vec4, AmbientLight, PointLight, GeomVertexArrayFormat, Vec2D
 from direct.task import Task
 from panda3d.core import Geom
 from panda3d.core import GeomNode
@@ -62,15 +61,6 @@ HAZARD_BLOCK = tex_coords((1, 1), (1, 1), (1, 1))
 SOLID_BLOCK = tex_coords((2, 0), (2, 0), (2, 0))
 BOUNDARY_BLOCK = tex_coords((2, 1), (2, 1), (2, 1))
 
-FACES = [
-    (0, 1, 0),
-    (0, -1, 0),
-    (-1, 0, 0),
-    (1, 0, 0),
-    (0, 0, 1),
-    (0, 0, -1),
-]
-
 
 def normalize(position: Vector) -> IntVector:
     """ Accepts `position` of arbitrary precision and returns the block
@@ -94,7 +84,7 @@ class Model(object):
 
         # A mapping from position to the texture of the block at that position.
         # This defines all the blocks that are currently in the world.
-        self.world = {}
+        self.world = voxel.VoxelWorld()
 
         # Mapping from position to a pyglet `VertexList` for all shown blocks.
         self._shown = {}
@@ -158,52 +148,20 @@ class Model(object):
 
     def _initialize(self) -> None:
         """ Initialize the world by placing all the blocks."""
-        self.build_lighting()
 
         # If loading from a file, pull in those blocks.
-        if len(sys.argv) > 1:
-            self.filepath = sys.argv[1]
-        try:
-            with open(self.filepath, 'rb') as infile:
-                self.world = pickle.load(infile)
-        except FileNotFoundError:
-            self._create_boundary_blocks()
+        # if len(sys.argv) > 1:
+        #     self.filepath = sys.argv[1]
+        # try:
+        #     with open(self.filepath, 'rb') as infile:
+        #         self.world = pickle.load(infile)
+        # except FileNotFoundError:
+        self._create_boundary_blocks()
 
         # Show all the blocks that have just been created.
         for block in self.world:
-            if self.exposed(block):
-                self.show_block(block)
+            self.world.place_voxel("foobar", block)
         self.process_entire_queue()
-
-    def build_lighting(self):
-        # Fog
-        exp_fog = Fog("scene-wide-fog")
-        exp_fog.setColor(0.0, 0.0, 0.0)
-        exp_fog.setExpDensity(0.01)
-        render.setFog(exp_fog)
-        # self.setBackgroundColor(0, 0, 0)
-
-        # Lights
-        spotlight = Spotlight("spotlight")
-        spotlight.setColor(Vec4(1, 1, 1, 1))
-        # spotlight.setShadowCaster(True, 2048, 2048)
-        spotlight_node = render.attachNewNode(spotlight)
-        spotlight_node.setPos(11, 11, 11)
-        spotlight_node.lookAt(0, 0, 0)
-        render.setLight(spotlight_node)
-
-        point = PointLight("point")
-        point.set_color(Vec4(1, 1, 1, 1))
-        point_node = render.attachNewNode(point)
-        point_node.set_pos(-11, -11, -11)
-        render.setLight(point_node)
-
-        # ambient_light = AmbientLight("ambientLight")
-        # ambient_light.setColor(Vec4(.25, .25, .25, 1))
-        # render.setLight(render.attachNewNode(ambient_light))
-
-        # Enable the shader generator for the receiving nodes
-        render.setShaderAuto()
 
     def save(self):
         """Write the room to a file."""
@@ -228,30 +186,21 @@ class Model(object):
             x, y, z = x + dx / m, y + dy / m, z + dz / m
         return None, None
 
-    def exposed(self, position: IntVector) -> bool:
-        """Returns False is given `position` is surrounded on all 6 sides by
-        blocks, True otherwise.
-        """
-        x, y, z = position
-        for dx, dy, dz in FACES:
-            if (x + dx, y + dy, z + dz) not in self.world:
-                return True
-        return False
-
     def add_block(self, position: IntVector, texture: list,
                   immediate: bool=True):
         """Add a block with the given `texture` and `position` to the world."""
         if position in self.world:
             return  # raise Exception("Block already exists there.")
-        self.world[position] = texture
-        if immediate:
-            if self.exposed(position):
-                self.show_block(position)
-            self.check_neighbors(position)
+        # self.world[position] = texture
+        self.world.place_voxel("", position)
+        # if immediate:
+        #     if self.exposed(position):
+        #         self.show_block(position)
+        #     self.check_neighbors(position)
 
     def remove_block(self, position: IntVector):
         """Remove the block at the given `position`."""
-        del self.world[position]
+        # del self.world[position]
         if position in self._shown:
             self.hide_block(position)
         self.check_neighbors(position)
@@ -278,33 +227,16 @@ class Model(object):
         """ Show the block at the given `position`. This method assumes the
         block has already been added with add_block()
         """
-        texture = self.world[position]
-        if immediate:
-            self._show_block(position, texture)
-        else:
-            self._enqueue(self._show_block, position, texture)
+        # texture = self.world[position]
+        # if immediate:
+        self._show_block(position)
+        # else:
+        #     self._enqueue(self._show_block, position, texture)
 
-    def _show_block(self, position: IntVector, texture_data: tuple):
+    def _show_block(self, position: IntVector):
         """ Private implementation of the `show_block()` method."""
         print("Adding cube:", position)
-        vertex_data = voxel.make_vertices(position)
-
-        # create vertex list
-        # FIXME Maybe `add_indexed()` should be used instead
-
-        for vertex in vertex_data:
-            self.vertex.addData3f(*vertex)
-            self.normal.addData3f(0, 0, 1)
-            self.prim.addVertex(self.vertex_count)
-            if not (self.vertex_count+1) % 4:
-                self.prim.close_primitive()  # TODO: This is so slow
-            self.vertex_count += 1
-
-            # TODO: Remove old code
-            # self._shown[position] = self.batch.add(
-            #     24, gl.GL_QUADS, self.group,
-            #     ('v3f/static', vertex_data),
-            #     ('t2f/static', texture_data))
+        self.world.place_voxel("", position)
 
         for tex in texture_data:
             self.texcoord.addData2f(*tex)
@@ -348,7 +280,7 @@ class Window(ShowBase):
 
         # Current (x, y, z) position in the world, specified with floats. Note
         # that, perhaps unlike in math class, the y-axis is the vertical axis.
-        self.position = (0, 0, 0)
+        self.position = Vec3D(0, 0, 0)
 
         # First element is rotation of the player in the x-z plane (ground
         # plane) measured from the z-axis down. The second is the rotation
@@ -356,7 +288,7 @@ class Window(ShowBase):
         #
         # The vertical plane rotation ranges from -90 (looking straight down) to
         # 90 (looking straight up). The horizontal rotation range is unbounded.
-        self.rotation = (0, 0)
+        self.rotation = Vec2D(0, 0)
 
         # The crosshairs at the center of the screen.
         self.reticle = None
@@ -389,13 +321,46 @@ class Window(ShowBase):
         # pyglet.clock.schedule_interval(self.update, 1.0 / TICKS_PER_SEC)
         self.update_task = self.task_mgr.add(self.update, 'update_task')
 
-    # def set_exclusive_mouse(self, exclusive: bool):
-    #     """ If `exclusive` is True, the game will capture the mouse, if False
-    #     the game will ignore the mouse.
-    #     """
-    #     # TODO: This would be better as a getter/setter for self.exclusive
-    #     super().set_exclusive_mouse(exclusive)
-    #     self.exclusive = exclusive
+        self.build_lighting()
+
+    def build_lighting(self):
+        """Set up the lighting for the game."""
+        # Fog
+        exp_fog = Fog("scene-wide-fog")
+        exp_fog.setColor(0.0, 0.0, 0.0)
+        exp_fog.setExpDensity(0.01)
+        self.render.setFog(exp_fog)
+        # self.setBackgroundColor(0, 0, 0)
+
+        # Lights
+        spotlight = Spotlight("spotlight")
+        spotlight.setColor(Vec4(1, 1, 1, 1))
+        # spotlight.setShadowCaster(True, 2048, 2048)
+        spotlight_node = self.render.attachNewNode(spotlight)
+        spotlight_node.setPos(11, 11, 11)
+        spotlight_node.lookAt(0, 0, 0)
+        self.render.setLight(spotlight_node)
+
+        point = PointLight("point")
+        point.set_color(Vec4(1, 1, 1, 1))
+        point_node = self.render.attachNewNode(point)
+        point_node.set_pos(-11, -11, -11)
+        self.render.setLight(point_node)
+
+        ambient_light = AmbientLight("ambientLight")
+        ambient_light.setColor(Vec4(.25, .25, .25, 1))
+        self.render.setLight(self.render.attachNewNode(ambient_light))
+
+        # Enable the shader generator for the receiving nodes
+        # self.render.setShaderAuto()
+
+    def set_exclusive_mouse(self, exclusive: bool):
+        """ If `exclusive` is True, the game will capture the mouse, if False
+        the game will ignore the mouse.
+        """
+        # TODO: This would be better as a getter/setter for self.exclusive
+        super().set_exclusive_mouse(exclusive)
+        self.exclusive = exclusive
 
     def get_sight_vector(self) -> Vector:
         """ Returns the current line of sight vector indicating the direction
@@ -476,41 +441,41 @@ class Window(ShowBase):
             dy += self.dy * dt
         # collisions
         x, y, z = self.position
-        x, y, z = self.collide((x + dx, y + dy, z + dz), PLAYER_HEIGHT)
+        # x, y, z = self.collide((x + dx, y + dy, z + dz), PLAYER_HEIGHT)
         self.position = (x, y, z)
 
-    def collide(self, position: Vector, height: float) -> Vector:
-        """ Checks to see if the player at the given `position` and `height`
-        is colliding with any blocks in the world and returns the new position.
-        """
-        # How much overlap with a dimension of a surrounding block you need to
-        # have to count as a collision. If 0, touching terrain at all counts as
-        # a collision. If .49, you sink into the ground, as if walking through
-        # tall grass. If >= .5, you'll fall through the ground.
-        pad = 0.25
-        p = list(position)
-        np = normalize(position)
-        for face in FACES:  # check all surrounding blocks
-            for i in range(3):  # check each dimension independently
-                if not face[i]:
-                    continue
-                # How much overlap you have with this dimension.
-                d = (p[i] - np[i]) * face[i]
-                if d < pad:
-                    continue
-                for dy in range(height):  # check each height
-                    op = list(np)
-                    op[1] -= dy
-                    op[i] += face[i]
-                    if tuple(op) not in self.model.world:
-                        continue
-                    p[i] -= (d - pad) * face[i]
-                    if face == (0, -1, 0) or face == (0, 1, 0):
-                        # You are colliding with the ground or ceiling, so stop
-                        # falling / rising.
-                        self.dy = 0
-                    break
-        return tuple(p)
+    # def collide(self, position: Vector, height: float) -> Vector:
+    #     """ Checks to see if the player at the given `position` and `height`
+    #     is colliding with any blocks in the world and returns the new position.
+    #     """
+    #     # How much overlap with a dimension of a surrounding block you need to
+    #     # have to count as a collision. If 0, touching terrain at all counts as
+    #     # a collision. If .49, you sink into the ground, as if walking through
+    #     # tall grass. If >= .5, you'll fall through the ground.
+    #     pad = 0.25
+    #     p = list(position)
+    #     np = normalize(position)
+    #     for face in FACES:  # check all surrounding blocks
+    #         for i in range(3):  # check each dimension independently
+    #             if not face[i]:
+    #                 continue
+    #             # How much overlap you have with this dimension.
+    #             d = (p[i] - np[i]) * face[i]
+    #             if d < pad:
+    #                 continue
+    #             for dy in range(height):  # check each height
+    #                 op = list(np)
+    #                 op[1] -= dy
+    #                 op[i] += face[i]
+    #                 if tuple(op) not in self.model.world:
+    #                     continue
+    #                 p[i] -= (d - pad) * face[i]
+    #                 if face == (0, -1, 0) or face == (0, 1, 0):
+    #                     # You are colliding with the ground or ceiling, so stop
+    #                     # falling / rising.
+    #                     self.dy = 0
+    #                 break
+    #     return tuple(p)
 
     def on_mouse_press(self, x: int, y: int, button: int, modifiers: int):
         """ Called when a mouse button is pressed. See pyglet docs for button
@@ -590,34 +555,6 @@ class Window(ShowBase):
         self.reticle = pyglet.graphics.vertex_list(
             4, ('v2i', (x - n, y, x + n, y, x, y - n, x, y + n)))
 
-    def set_2d(self):
-        """ Configure OpenGL to draw in 2d."""
-        width, height = self.get_size()
-        gl.glDisable(gl.GL_DEPTH_TEST)
-        gl.glViewport(0, 0, width, height)
-        gl.glMatrixMode(gl.GL_PROJECTION)
-        gl.glLoadIdentity()
-        gl.glOrtho(0, width, 0, height, -1, 1)
-        gl.glMatrixMode(gl.GL_MODELVIEW)
-        gl.glLoadIdentity()
-
-    def set_3d(self):
-        """ Configure OpenGL to draw in 3d."""
-        width, height = self.get_size()
-        gl.glEnable(gl.GL_DEPTH_TEST)
-        gl.glViewport(0, 0, width, height)
-        gl.glMatrixMode(gl.GL_PROJECTION)
-        gl.glLoadIdentity()
-        gl.gluPerspective(65.0, width / float(height), 0.1, 60.0)
-        gl.glMatrixMode(gl.GL_MODELVIEW)
-        gl.glLoadIdentity()
-        x, y = self.rotation
-        gl.glRotatef(x, 0, 1, 0)
-        gl.glRotatef(-y, math.cos(math.radians(x)),
-                     0, math.sin(math.radians(x)))
-        x, y, z = self.position
-        gl.glTranslatef(-x, -y, -z)
-
     def on_draw(self):
         """ Called by pyglet to draw the canvas."""
         self.clear()
@@ -656,49 +593,9 @@ class Window(ShowBase):
         self.reticle.draw(gl.GL_LINES)
 
 
-def setup_fog():
-    """ Configure the OpenGL fog properties."""
-    # Enable fog. Fog "blends a fog color with each rasterized pixel fragment's
-    # post-texturing color."
-    gl.glEnable(gl.GL_FOG)
-    # Set the fog color.
-    # noinspection PyCallingNonCallable
-    gl.glFogfv(gl.GL_FOG_COLOR, (gl.GLfloat * 4)(0.5, 0.69, 1.0, 1))
-    # Say we have no preference between rendering speed and quality.
-    gl.glHint(gl.GL_FOG_HINT, gl.GL_DONT_CARE)
-    # Specify the equation used to compute the blending factor.
-    gl.glFogi(gl.GL_FOG_MODE, gl.GL_LINEAR)
-    # How close and far away fog starts and ends. The closer the start and end,
-    # the denser the fog in the fog range.
-    gl.glFogf(gl.GL_FOG_START, 20.0)
-    gl.glFogf(gl.GL_FOG_END, 60.0)
-
-
-def setup():
-    """ Basic OpenGL configuration."""
-    # # Set the color of "clear", i.e. the sky, in rgba.
-    # gl.glClearColor(0.5, 0.69, 1.0, 1)
-    # # Enable culling (not rendering) of back-facing facets -- facets that aren't
-    # # visible to you.
-    # gl.glEnable(gl.GL_CULL_FACE)
-    # # Set the texture minification/magnification function to GL_NEAREST (nearest
-    # # in Manhattan distance) to the specified texture coordinates. GL_NEAREST
-    # # "is generally faster than GL_LINEAR, but it can produce textured images
-    # # with sharper edges because the transition between texture elements is not
-    # # as smooth."
-    # gl.glTexParameteri(
-    #     gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
-    # gl.glTexParameteri(
-    #     gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
-    # setup_fog()
-
-
 def main():
     """Run the program."""
     window = Window()
-    # Hide the mouse cursor and prevent the mouse from leaving the window.
-    # window.set_exclusive_mouse(True)
-    setup()
     window.run()
 
 
