@@ -2,8 +2,10 @@
 """A prototype editor for `Echoes of the Infinite Multiverse`."""
 import math
 import pickle
+
+import tqdm
 from direct.showbase.ShowBase import ShowBase, Fog, \
-    Spotlight, Vec4, AmbientLight, PointLight, Vec2D
+    Spotlight, Vec4, AmbientLight, PointLight, Vec2D, WindowProperties
 from direct.task import Task
 from panda3d.core import Vec3D
 import voxel
@@ -45,7 +47,7 @@ class Model(object):
 
     def _create_boundary_blocks(self):
         n = 10  # 1/2 width and height of world
-        for x in range(-n, n + 1):
+        for x in tqdm.tqdm(range(-n, n + 1)):
             for z in range(-n, n + 1):
                 # create a boundary floor and ceiling
                 self.world.place_voxel(BOUNDARY_BLOCK, Vec3D(x, -n, z))
@@ -67,10 +69,6 @@ class Model(object):
         # except FileNotFoundError:
         #     self._load_default_world()
         self._create_boundary_blocks()
-
-        # Show all the blocks that have just been created.
-        for block in self.world:
-            self.world.place_voxel("foobar", block)
 
     def save(self):
         """Write the room to a file."""
@@ -119,17 +117,9 @@ class Model(object):
         """
         # texture = self.world[position]
         # if immediate:
-        self._show_block(position)
+        self.world.place_voxel("", position)
         # else:
         #     self._enqueue(self._show_block, position, texture)
-
-    def _show_block(self, position: IntVector):
-        """ Private implementation of the `show_block()` method."""
-        print("Adding cube:", position)
-        self.world.place_voxel("", position)
-
-        for tex in texture_data:
-            self.texcoord.addData2f(*tex)
 
     def hide_block(self, position: IntVector):
         """ Hide the block at the given `position`. Hiding does not remove the
@@ -150,10 +140,10 @@ class Model(object):
 
 class Window(ShowBase):
     """Implement the code that creates the window."""
+    previous_mouse = (0, 0)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
         # Whether or not the window exclusively captures the mouse.
         self.exclusive = False
 
@@ -183,8 +173,8 @@ class Window(ShowBase):
         # The crosshairs at the center of the screen.
         self.reticle = None
 
-        # Velocity in the y (upward) direction.
-        self.dy = 0
+        # Velocity in the z (upward) direction.
+        self.dz = 0
 
         # A list of blocks the player can place. Hit num keys to cycle.
         # self.inventory = [SOLID_BLOCK, MISSILE_BLOCK, HAZARD_BLOCK]
@@ -201,12 +191,15 @@ class Window(ShowBase):
         #     x=10, y=self.height - 10, anchor_x='left', anchor_y='top',
         #     color=(0, 0, 0, 255))
 
+        self.build_lighting()
+
         # This call schedules the `update()` method to be called
         # TICKS_PER_SEC. This is the main game event loop.
         # pyglet.clock.schedule_interval(self.update, 1.0 / TICKS_PER_SEC)
+        self.disableMouse()
+        self.toggle_exclusive_mouse()
         self.update_task = self.task_mgr.add(self.update, 'update_task')
-
-        self.build_lighting()
+        self.accept('escape', self.toggle_exclusive_mouse)
 
     def build_lighting(self):
         """Set up the lighting for the game."""
@@ -215,7 +208,7 @@ class Window(ShowBase):
         exp_fog.setColor(0.0, 0.0, 0.0)
         exp_fog.setExpDensity(0.01)
         self.render.setFog(exp_fog)
-        # self.setBackgroundColor(0, 0, 0)
+        self.setBackgroundColor(0, 0, 0)
 
         # Lights
         spotlight = Spotlight("spotlight")
@@ -227,7 +220,7 @@ class Window(ShowBase):
         self.render.setLight(spotlight_node)
 
         point = PointLight("point")
-        point.set_color(Vec4(1, 1, 1, 1))
+        point.setColor(Vec4(1, 1, 1, 1))
         # point.setShadowCaster(True, 2048, 2048)
         point_node = self.render.attachNewNode(point)
         point_node.set_pos(-11, -11, -11)
@@ -240,13 +233,21 @@ class Window(ShowBase):
         # Enable the shader generator for the receiving nodes
         self.render.setShaderAuto()
 
-    def set_exclusive_mouse(self, exclusive: bool):
+    def toggle_exclusive_mouse(self):
         """ If `exclusive` is True, the game will capture the mouse, if False
         the game will ignore the mouse.
         """
-        # TODO: This would be better as a getter/setter for self.exclusive
-        super().set_exclusive_mouse(exclusive)
-        self.exclusive = exclusive
+        props = WindowProperties()
+        if self.exclusive:
+            props.setCursorHidden(False)
+            props.setMouseMode(WindowProperties.M_absolute)
+            self.win.requestProperties(props)
+        else:
+            props.setCursorHidden(True)
+            props.setMouseMode(WindowProperties.M_relative)
+            self.win.requestProperties(props)
+        # TODO: Reset previous_mouse here
+        self.exclusive = not self.exclusive
 
     def get_sight_vector(self) -> Vector:
         """ Returns the current line of sight vector indicating the direction
@@ -259,9 +260,9 @@ class Window(ShowBase):
         m = math.cos(math.radians(y))
         # dy ranges from -1 to 1 and is -1 when looking straight down and 1 when
         # looking straight up.
-        dy = math.sin(math.radians(y))
         dx = math.cos(math.radians(x - 90)) * m
-        dz = math.sin(math.radians(x - 90)) * m
+        dy = math.sin(math.radians(x - 90)) * m
+        dz = math.sin(math.radians(y))
         return dx, dy, dz
 
     def get_motion_vector(self) -> Vector:
@@ -269,28 +270,28 @@ class Window(ShowBase):
         player.
         """
         if any(self.strafe):
-            x, y = self.rotation
+            x, z = self.rotation
             strafe = math.degrees(math.atan2(*self.strafe))
-            y_angle = math.radians(y)
+            z_angle = math.radians(z)
             x_angle = math.radians(x + strafe)
             if self.flying:
-                m = math.cos(y_angle)
-                dy = math.sin(y_angle)
+                m = math.cos(z_angle)
+                dz = math.sin(z_angle)
                 if self.strafe[1]:
                     # Moving left or right.
-                    dy = 0.0
+                    dz = 0.0
                     m = 1
                 if self.strafe[0] > 0:
                     # Moving backwards.
-                    dy *= -1
+                    dz *= -1
                 # When you are flying up or down, you have less left and right
                 # motion.
                 dx = math.cos(x_angle) * m
-                dz = math.sin(x_angle) * m
+                dy = math.sin(x_angle) * m
             else:
-                dy = 0.0
                 dx = math.cos(x_angle)
-                dz = math.sin(x_angle)
+                dy = math.sin(x_angle)
+                dz = 0.0
         else:
             dy = 0.0
             dx = 0.0
@@ -298,17 +299,18 @@ class Window(ShowBase):
         return dx, dy, dz
 
     def update(self, task: Task):
-        """ This method is scheduled to be called repeatedly by the pyglet
-        clock.
-        """
-        dt = 1/60  # TODO: THIS IS SO WRONG
+        """Once per frame, we update the player physics."""
+        # noinspection PyUnresolvedReferences
+        dt = globalClock.getDt()
+        # Use 8 steps to be somewhat continuous or something lame like that.
         m = 8
         dt = min(dt, 0.2)
         for _ in range(m):
             self._update(dt / m)
+        return task.cont
 
     def _update(self, dt: float) -> None:
-        """ Private implementation of the `update()` method. This is where most
+        """Private implementation of the `update()` method. This is where most
         of the motion logic lives, along with gravity and collision detection.
         """
         # walking
@@ -322,13 +324,30 @@ class Window(ShowBase):
             # Update your vertical speed: if you are falling, speed up until you
             # hit terminal velocity; if you are jumping, slow down until you
             # start falling.
-            self.dy -= dt * GRAVITY
-            self.dy = max(self.dy, -TERMINAL_VELOCITY)
-            dy += self.dy * dt
+            self.dz -= dt * GRAVITY
+            self.dz = max(self.dz, -TERMINAL_VELOCITY)
+            dz += self.dz * dt
         # collisions
         x, y, z = self.position
-        # x, y, z = self.collide((x + dx, y + dy, z + dz), PLAYER_HEIGHT)  # TODO: re-add
+        x, y, z = self.collide((x + dx, y + dy, z + dz), PLAYER_HEIGHT)  # TODO: re-add
         self.position = (x, y, z)
+
+        # Handle mouse movements
+        dx, dy = 0, 0
+        if self.mouseWatcherNode.hasMouse() and self.exclusive:
+            x = self.mouseWatcherNode.getMouseX()
+            y = self.mouseWatcherNode.getMouseY()
+            dx = x - self.previous_mouse[0]
+            dy = y - self.previous_mouse[1]
+            self.previous_mouse = x, y
+
+        # update the camera
+        self.camera.setPos(*self.position)
+        self.rotation[0] -= dx * 60
+        self.rotation[1] += dy * 60
+        # Clamp to (-pi, pi)
+        self.rotation[1] = min(max(-90, self.rotation[1]), 90)
+        self.camera.setHpr(self.rotation[0], self.rotation[1], 0)
 
     def collide(self, position: Vector, height: float) -> Vector:
         """ Checks to see if the player at the given `position` and `height`
@@ -341,7 +360,7 @@ class Window(ShowBase):
         pad = 0.25
         p = list(position)
         np = normalize(position)
-        for face in FACES:  # check all surrounding blocks
+        for face in voxel.UNIT_VECTORS:  # check all surrounding blocks
             for i in range(3):  # check each dimension independently
                 if not face[i]:
                     continue
@@ -349,17 +368,17 @@ class Window(ShowBase):
                 d = (p[i] - np[i]) * face[i]
                 if d < pad:
                     continue
-                for dy in range(height):  # check each height
+                for dz in range(height):  # check each height
                     op = list(np)
-                    op[1] -= dy
+                    op[1] -= dz
                     op[i] += face[i]
                     if tuple(op) not in self.model.world:
                         continue
                     p[i] -= (d - pad) * face[i]
-                    if face == (0, -1, 0) or face == (0, 1, 0):
+                    if face == (0, 0, -1) or face == (0, 0, 1):
                         # You are colliding with the ground or ceiling, so stop
                         # falling / rising.
-                        self.dy = 0
+                        self.dz = 0
                     break
         return tuple(p)
 
@@ -380,16 +399,7 @@ class Window(ShowBase):
                 if texture != BOUNDARY_BLOCK:
                     self.model.world.remove_voxel(position)
         else:
-            self.set_exclusive_mouse(True)
-
-    def on_mouse_motion(self, x: int, y: int, dx: float, dy: float):
-        """ Called when the player moves the mouse."""
-        if self.exclusive:
-            m = 0.15
-            x, y = self.rotation
-            x, y = x + dx * m, y + dy * m
-            y = max(-90, min(90, y))
-            self.rotation = (x, y)
+            self.toggle_exclusive_mouse()
 
     def on_key_press(self, symbol: int, modifiers: int):
         """ Called when the player presses a key. See pyglet docs for key
@@ -404,8 +414,8 @@ class Window(ShowBase):
         elif symbol == key.D:
             self.strafe[1] += 1
         elif symbol == key.SPACE:
-            if self.dy == 0:
-                self.dy = JUMP_SPEED
+            if self.dz == 0:
+                self.dz = JUMP_SPEED
         elif symbol == key.ESCAPE:
             self.set_exclusive_mouse(False)
         elif symbol == key.TAB:

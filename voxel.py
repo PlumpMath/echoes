@@ -114,6 +114,10 @@ class VoxelWorld:
         # self.check_neighbors(position)
         raise NotImplementedError()
 
+    # TODO: Calculate which faces to show and hide every time there's a voxel
+    # change. Luckily any single voxel change only affects adjacent voxels
+    # (plus voxels around adjacent, transparent voxels)
+
     def exposed(self, position: Vec3D) -> bool:
         """Returns a boolean specifying if the given voxel is visible from any
         angle (because it is NOT completely surrounded by opaque voxels.
