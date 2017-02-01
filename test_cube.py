@@ -10,9 +10,9 @@ class Window(ShowBase):
     """Implement the code that creates the window."""
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.world = voxel.VoxelWorld()
         self.build_lighting()
-        self.make_cube()
+        self.world = voxel.VoxelWorld()
+        self.world.place_voxel("", Vec3D(0, 0, 0))
 
     def build_lighting(self):
         """Add lights, fog, and shaders to the scene."""
@@ -45,10 +45,6 @@ class Window(ShowBase):
 
         # Enable the shader generator for the receiving nodes
         self.render.setShaderAuto()
-
-    def make_cube(self):
-        """Generate a cube model."""
-        self.world.place_voxel("", Vec3D(0, 0, 0))
 
 
 def main():

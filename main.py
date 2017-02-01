@@ -1,65 +1,27 @@
 # coding=utf-8
 """A prototype editor for `Echoes of the Infinite Multiverse`."""
 import math
-
-from collections import deque
-
 import pickle
-import sys
-
-import itertools
-from direct.showbase.ShowBase import ShowBase, SamplerState, TextureStage, Fog, \
-    Spotlight, Vec4, AmbientLight, PointLight, GeomVertexArrayFormat, Vec2D
+from direct.showbase.ShowBase import ShowBase, Fog, \
+    Spotlight, Vec4, AmbientLight, PointLight, Vec2D
 from direct.task import Task
-from panda3d.core import Geom
-from panda3d.core import GeomNode
-from panda3d.core import GeomTristrips
-from panda3d.core import GeomVertexData
-from panda3d.core import GeomVertexFormat
-from panda3d.core import GeomVertexWriter
 from panda3d.core import Vec3D
-
-# Typing convenience
 import voxel
 
+# Typing convenience
 Vector = (float, float, float)
 IntVector = (int, int, int)
 
 TICKS_PER_SEC = 60
-
 WALKING_SPEED = 5
 FLYING_SPEED = 15
-
 GRAVITY = 20.0
 MAX_JUMP_HEIGHT = 5.0
 JUMP_SPEED = math.sqrt(2 * GRAVITY * MAX_JUMP_HEIGHT)
 TERMINAL_VELOCITY = 50
-
 PLAYER_HEIGHT = 2
-
-
-def tex_coord(x: int, y: int, n: int=4):
-    """ Return the bounding vertices of the texture square."""
-    m = 1.0 / n
-    dx = x * m
-    dy = y * m
-    return (dx, dy), (dx + m, dy), (dx, dy + m), (dx + m, dy + m)
-
-
-def tex_coords(top, bottom, side):
-    """Return a list of the texture squares for the top, bottom and side."""
-    top = tex_coord(*top)
-    bottom = tex_coord(*bottom)
-    side = tex_coord(*side)
-    return tuple(itertools.chain(top, bottom, side, side, side, side))
-
-
 TEXTURE_PATH = 'texture.png'
-
-MISSILE_BLOCK = tex_coords((1, 0), (0, 1), (0, 0))
-HAZARD_BLOCK = tex_coords((1, 1), (1, 1), (1, 1))
-SOLID_BLOCK = tex_coords((2, 0), (2, 0), (2, 0))
-BOUNDARY_BLOCK = tex_coords((2, 1), (2, 1), (2, 1))
+BOUNDARY_BLOCK = None
 
 
 def normalize(position: Vector) -> IntVector:
@@ -76,79 +38,26 @@ class Model(object):
     filepath = "untitled.pkl"
 
     def __init__(self):
-        # A Batch is a collection of vertex lists for batched rendering.
-        # self.batch = pyglet.graphics.Batch()
-
-        # A TextureGroup manages an OpenGL texture.
-        # self.group = TextureGroup(image.load(TEXTURE_PATH).get_texture())
-
-        # A mapping from position to the texture of the block at that position.
-        # This defines all the blocks that are currently in the world.
         self.world = voxel.VoxelWorld()
-
         # Mapping from position to a pyglet `VertexList` for all shown blocks.
         self._shown = {}
-
-        # PANDA3D Procedural geometry
-        array = GeomVertexArrayFormat()
-        array.addColumn("vertex", 3, Geom.NTFloat32, Geom.CPoint)
-        array.addColumn("normal", 3, Geom.NTFloat32, Geom.CPoint)
-        array.addColumn("tangent", 3, Geom.NTFloat32, Geom.CPoint)
-        array.addColumn("binormal", 3, Geom.NTFloat32, Geom.CPoint)
-        array.addColumn("texcoord", 2, Geom.NTFloat32, Geom.CTexcoord)
-
-        self.vertex_format = GeomVertexFormat.getV3n3t2()
-
-        self.vertex_data = GeomVertexData(
-            'room', self.vertex_format, Geom.UH_dynamic)
-        # self.vertex_data.setNumRows(4)  # TODO: For performance
-        self.vertex_count = 0
-        self.vertex = GeomVertexWriter(self.vertex_data, 'vertex')
-        self.normal = GeomVertexWriter(self.vertex_data, 'normal')
-        self.texcoord = GeomVertexWriter(self.vertex_data, 'texcoord')
-        self.prim = GeomTristrips(Geom.UHStatic)
-
-        # Simple function queue implementation. The queue is populated with
-        # _show_block() and _hide_block() calls
-        self.queue = deque()
-
-        self._initialize()
-
-        # Create the NodePath
-        self.geom = Geom(self.vertex_data)
-        self.geom.addPrimitive(self.prim)
-        self.node = GeomNode('gnode')
-        self.node.addGeom(self.geom)
-        self.nodePath = render.attachNewNode(self.node)
-
-        # Set Texture
-        dungeon_tex = loader.loadTexture("texture.png")
-        dungeon_tex.setMagfilter(SamplerState.FT_nearest)
-        dungeon_tex.setMinfilter(SamplerState.FT_nearest)
-        self.nodePath.setTexture(dungeon_tex)
-
-        # Set Normal Map
-        normal_tex = loader.loadTexture("normal_rocks.png")
-        ts = TextureStage('ts')
-        ts.setMode(TextureStage.MNormal)
-        self.nodePath.setTexture(ts, normal_tex)
+        self.load()
 
     def _create_boundary_blocks(self):
         n = 10  # 1/2 width and height of world
         for x in range(-n, n + 1):
             for z in range(-n, n + 1):
                 # create a boundary floor and ceiling
-                self.add_block((x, -n, z), BOUNDARY_BLOCK, immediate=False)
-                self.add_block((x, n + 1, z), BOUNDARY_BLOCK, immediate=False)
+                self.world.place_voxel(BOUNDARY_BLOCK, Vec3D(x, -n, z))
+                self.world.place_voxel(BOUNDARY_BLOCK, Vec3D(x, n+1, z))
 
                 # create outer boundary walls
                 if x in (-n, n) or z in (-n, n):
                     for dy in range(-n, n + 1):
-                        self.add_block((x, dy, z), BOUNDARY_BLOCK, immediate=False)
+                        self.world.place_voxel(BOUNDARY_BLOCK, Vec3D(x, dy, z))
 
-    def _initialize(self) -> None:
+    def load(self) -> None:
         """ Initialize the world by placing all the blocks."""
-
         # If loading from a file, pull in those blocks.
         # if len(sys.argv) > 1:
         #     self.filepath = sys.argv[1]
@@ -156,12 +65,12 @@ class Model(object):
         #     with open(self.filepath, 'rb') as infile:
         #         self.world = pickle.load(infile)
         # except FileNotFoundError:
+        #     self._load_default_world()
         self._create_boundary_blocks()
 
         # Show all the blocks that have just been created.
         for block in self.world:
             self.world.place_voxel("foobar", block)
-        self.process_entire_queue()
 
     def save(self):
         """Write the room to a file."""
@@ -185,25 +94,6 @@ class Model(object):
             previous = key
             x, y, z = x + dx / m, y + dy / m, z + dz / m
         return None, None
-
-    def add_block(self, position: IntVector, texture: list,
-                  immediate: bool=True):
-        """Add a block with the given `texture` and `position` to the world."""
-        if position in self.world:
-            return  # raise Exception("Block already exists there.")
-        # self.world[position] = texture
-        self.world.place_voxel("", position)
-        # if immediate:
-        #     if self.exposed(position):
-        #         self.show_block(position)
-        #     self.check_neighbors(position)
-
-    def remove_block(self, position: IntVector):
-        """Remove the block at the given `position`."""
-        # del self.world[position]
-        if position in self._shown:
-            self.hide_block(position)
-        self.check_neighbors(position)
 
     def check_neighbors(self, position):
         """ Check all blocks surrounding `position` and ensure their visual
@@ -297,15 +187,10 @@ class Window(ShowBase):
         self.dy = 0
 
         # A list of blocks the player can place. Hit num keys to cycle.
-        self.inventory = [SOLID_BLOCK, MISSILE_BLOCK, HAZARD_BLOCK]
+        # self.inventory = [SOLID_BLOCK, MISSILE_BLOCK, HAZARD_BLOCK]
 
         # The current block the user can place. Hit num keys to cycle.
-        self.block = self.inventory[0]
-
-        # Convenience list of num keys.
-        # self.num_keys = [
-        #     key._1, key._2, key._3, key._4, key._5,
-        #     key._6, key._7, key._8, key._9, key._0]
+        # self.block = self.inventory[0]
 
         # Instance of the model that handles the world.
         self.model = Model()
@@ -343,6 +228,7 @@ class Window(ShowBase):
 
         point = PointLight("point")
         point.set_color(Vec4(1, 1, 1, 1))
+        # point.setShadowCaster(True, 2048, 2048)
         point_node = self.render.attachNewNode(point)
         point_node.set_pos(-11, -11, -11)
         self.render.setLight(point_node)
@@ -352,7 +238,7 @@ class Window(ShowBase):
         self.render.setLight(self.render.attachNewNode(ambient_light))
 
         # Enable the shader generator for the receiving nodes
-        # self.render.setShaderAuto()
+        self.render.setShaderAuto()
 
     def set_exclusive_mouse(self, exclusive: bool):
         """ If `exclusive` is True, the game will capture the mouse, if False
@@ -441,41 +327,41 @@ class Window(ShowBase):
             dy += self.dy * dt
         # collisions
         x, y, z = self.position
-        # x, y, z = self.collide((x + dx, y + dy, z + dz), PLAYER_HEIGHT)
+        # x, y, z = self.collide((x + dx, y + dy, z + dz), PLAYER_HEIGHT)  # TODO: re-add
         self.position = (x, y, z)
 
-    # def collide(self, position: Vector, height: float) -> Vector:
-    #     """ Checks to see if the player at the given `position` and `height`
-    #     is colliding with any blocks in the world and returns the new position.
-    #     """
-    #     # How much overlap with a dimension of a surrounding block you need to
-    #     # have to count as a collision. If 0, touching terrain at all counts as
-    #     # a collision. If .49, you sink into the ground, as if walking through
-    #     # tall grass. If >= .5, you'll fall through the ground.
-    #     pad = 0.25
-    #     p = list(position)
-    #     np = normalize(position)
-    #     for face in FACES:  # check all surrounding blocks
-    #         for i in range(3):  # check each dimension independently
-    #             if not face[i]:
-    #                 continue
-    #             # How much overlap you have with this dimension.
-    #             d = (p[i] - np[i]) * face[i]
-    #             if d < pad:
-    #                 continue
-    #             for dy in range(height):  # check each height
-    #                 op = list(np)
-    #                 op[1] -= dy
-    #                 op[i] += face[i]
-    #                 if tuple(op) not in self.model.world:
-    #                     continue
-    #                 p[i] -= (d - pad) * face[i]
-    #                 if face == (0, -1, 0) or face == (0, 1, 0):
-    #                     # You are colliding with the ground or ceiling, so stop
-    #                     # falling / rising.
-    #                     self.dy = 0
-    #                 break
-    #     return tuple(p)
+    def collide(self, position: Vector, height: float) -> Vector:
+        """ Checks to see if the player at the given `position` and `height`
+        is colliding with any blocks in the world and returns the new position.
+        """
+        # How much overlap with a dimension of a surrounding block you need to
+        # have to count as a collision. If 0, touching terrain at all counts as
+        # a collision. If .49, you sink into the ground, as if walking through
+        # tall grass. If >= .5, you'll fall through the ground.
+        pad = 0.25
+        p = list(position)
+        np = normalize(position)
+        for face in FACES:  # check all surrounding blocks
+            for i in range(3):  # check each dimension independently
+                if not face[i]:
+                    continue
+                # How much overlap you have with this dimension.
+                d = (p[i] - np[i]) * face[i]
+                if d < pad:
+                    continue
+                for dy in range(height):  # check each height
+                    op = list(np)
+                    op[1] -= dy
+                    op[i] += face[i]
+                    if tuple(op) not in self.model.world:
+                        continue
+                    p[i] -= (d - pad) * face[i]
+                    if face == (0, -1, 0) or face == (0, 1, 0):
+                        # You are colliding with the ground or ceiling, so stop
+                        # falling / rising.
+                        self.dy = 0
+                    break
+        return tuple(p)
 
     def on_mouse_press(self, x: int, y: int, button: int, modifiers: int):
         """ Called when a mouse button is pressed. See pyglet docs for button
@@ -483,16 +369,16 @@ class Window(ShowBase):
         """
         if self.exclusive:
             vector = self.get_sight_vector()
-            block, previous = self.model.hit_test(self.position, vector)
-            if (button == mouse.RIGHT) or \
-                    ((button == mouse.LEFT) and (modifiers & key.MOD_CTRL)):
-                # ON OSX, control + left click = right click.
+            position, previous = self.model.hit_test(self.position, vector)
+            # previous is the block adjacent to the touched block
+            if button == mouse.RIGHT:
                 if previous:
-                    self.model.add_block(previous, self.block)
-            elif button == pyglet.window.mouse.LEFT and block:
-                texture = self.model.world[block]
+                    self.model.world.place_voxel("", previous)
+                    # self.model.add_block(previous, self.block)
+            elif button == pyglet.window.mouse.LEFT and position:
+                texture = self.model.world[position]
                 if texture != BOUNDARY_BLOCK:
-                    self.model.remove_block(block)
+                    self.model.world.remove_voxel(position)
         else:
             self.set_exclusive_mouse(True)
 

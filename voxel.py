@@ -107,6 +107,11 @@ class VoxelWorld:
 
     def remove_voxel(self, position: Vec3D) -> None:
         """Remove the voxel at the given position."""
+        # TODO:
+        # del self.world[position]
+        # if position in self._shown:
+        #     self.hide_block(position)
+        # self.check_neighbors(position)
         raise NotImplementedError()
 
     def exposed(self, position: Vec3D) -> bool:
