@@ -4,13 +4,15 @@ import math
 import pickle
 
 import tqdm
-from direct.showbase.ShowBase import ShowBase, Fog, \
-    Spotlight, Vec4, AmbientLight, PointLight, Vec2D, WindowProperties
+from direct.showbase.ShowBase import ShowBase, Fog, Spotlight, Vec4, \
+    AmbientLight, PointLight, Vec2D
 from direct.task import Task
 from panda3d.core import Vec3D
 import voxel
 
 # Typing convenience
+from fps_controls import FPSControls
+
 Vector = (float, float, float)
 IntVector = (int, int, int)
 
@@ -144,8 +146,7 @@ class Window(ShowBase):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Whether or not the window exclusively captures the mouse.
-        self.exclusive = False
+        self.controls = FPSControls(self)
 
         # When flying gravity has no effect and speed is increased.
         self.flying = False
@@ -197,9 +198,8 @@ class Window(ShowBase):
         # TICKS_PER_SEC. This is the main game event loop.
         # pyglet.clock.schedule_interval(self.update, 1.0 / TICKS_PER_SEC)
         self.disableMouse()
-        self.toggle_exclusive_mouse()
         self.update_task = self.task_mgr.add(self.update, 'update_task')
-        self.accept('escape', self.toggle_exclusive_mouse)
+        self.accept('escape', self.controls.toggle_mouse_capture)
 
     def build_lighting(self):
         """Set up the lighting for the game."""
@@ -232,22 +232,6 @@ class Window(ShowBase):
 
         # Enable the shader generator for the receiving nodes
         self.render.setShaderAuto()
-
-    def toggle_exclusive_mouse(self):
-        """ If `exclusive` is True, the game will capture the mouse, if False
-        the game will ignore the mouse.
-        """
-        props = WindowProperties()
-        if self.exclusive:
-            props.setCursorHidden(False)
-            props.setMouseMode(WindowProperties.M_absolute)
-            self.win.requestProperties(props)
-        else:
-            props.setCursorHidden(True)
-            props.setMouseMode(WindowProperties.M_relative)
-            self.win.requestProperties(props)
-        # TODO: Reset previous_mouse here
-        self.exclusive = not self.exclusive
 
     def get_sight_vector(self) -> Vector:
         """ Returns the current line of sight vector indicating the direction
@@ -334,7 +318,7 @@ class Window(ShowBase):
 
         # Handle mouse movements
         dx, dy = 0, 0
-        if self.mouseWatcherNode.hasMouse() and self.exclusive:
+        if self.mouseWatcherNode.hasMouse() and self.controls.mouse_captured:
             x = self.mouseWatcherNode.getMouseX()
             y = self.mouseWatcherNode.getMouseY()
             dx = x - self.previous_mouse[0]
@@ -386,7 +370,7 @@ class Window(ShowBase):
         """ Called when a mouse button is pressed. See pyglet docs for button
         and modifier mappings.
         """
-        if self.exclusive:
+        if self.controls.mouse_captured:
             vector = self.get_sight_vector()
             position, previous = self.model.hit_test(self.position, vector)
             # previous is the block adjacent to the touched block
@@ -399,7 +383,7 @@ class Window(ShowBase):
                 if texture != BOUNDARY_BLOCK:
                     self.model.world.remove_voxel(position)
         else:
-            self.toggle_exclusive_mouse()
+            self.controls.toggle_mouse_capture()
 
     def on_key_press(self, symbol: int, modifiers: int):
         """ Called when the player presses a key. See pyglet docs for key
@@ -416,8 +400,6 @@ class Window(ShowBase):
         elif symbol == key.SPACE:
             if self.dz == 0:
                 self.dz = JUMP_SPEED
-        elif symbol == key.ESCAPE:
-            self.set_exclusive_mouse(False)
         elif symbol == key.TAB:
             self.flying = not self.flying
         elif symbol == key.ENTER:
