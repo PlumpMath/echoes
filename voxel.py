@@ -245,3 +245,20 @@ def make_indices(start=0) -> Tuple:
     return tuple(start + v for v in offsets)
 
 
+# def check_neighbors(self, position):
+#     """ Check all blocks surrounding `position` and ensure their visual
+#     state is current. This means hiding blocks that are not exposed and
+#     ensuring that all exposed blocks are shown. Usually used after a block
+#     is added or removed.
+#     """
+#     x, y, z = position
+#     for dx, dy, dz in FACES:
+#         key = (x + dx, y + dy, z + dz)
+#         if key not in self.world:
+#             continue
+#         if self.exposed(key):
+#             if key not in self._shown:
+#                 self.show_block(key)
+#         else:
+#             if key in self._shown:
+#                 self.hide_block(key)

@@ -11,7 +11,7 @@ from panda3d.core import Vec3D
 import voxel
 
 # Typing convenience
-from fps_controls import FPSControls
+from fps_controls import FPSControls, ActionKey
 
 Vector = (float, float, float)
 IntVector = (int, int, int)
@@ -37,28 +37,29 @@ def normalize(position: Vector) -> IntVector:
     return x, y, z
 
 
-class Model(object):
+class RoomEditor(voxel.VoxelWorld):
     """A drawable object."""
     filepath = "untitled.pkl"
 
     def __init__(self):
-        self.world = voxel.VoxelWorld()
-        # Mapping from position to a pyglet `VertexList` for all shown blocks.
-        self._shown = {}
+        super().__init__()
         self.load()
 
-    def _create_boundary_blocks(self):
+    def _create_boundary_blocks(self) -> None:
         n = 10  # 1/2 width and height of world
         for x in tqdm.tqdm(range(-n, n + 1)):
             for z in range(-n, n + 1):
                 # create a boundary floor and ceiling
-                self.world.place_voxel(BOUNDARY_BLOCK, Vec3D(x, -n, z))
-                self.world.place_voxel(BOUNDARY_BLOCK, Vec3D(x, n+1, z))
+                self.place_voxel(BOUNDARY_BLOCK, Vec3D(x, -n, z))
+                self.place_voxel(BOUNDARY_BLOCK, Vec3D(x, n+1, z))
+
+                import random
+                self.place_voxel(BOUNDARY_BLOCK, Vec3D(x, random.randint(-n, n+1), z))
 
                 # create outer boundary walls
                 if x in (-n, n) or z in (-n, n):
                     for dy in range(-n, n + 1):
-                        self.world.place_voxel(BOUNDARY_BLOCK, Vec3D(x, dy, z))
+                        self.place_voxel(BOUNDARY_BLOCK, Vec3D(x, dy, z))
 
     def load(self) -> None:
         """ Initialize the world by placing all the blocks."""
@@ -74,12 +75,13 @@ class Model(object):
 
     def save(self):
         """Write the room to a file."""
+        # TODO: I'm borked!
         with open(self.filepath, 'wb') as outfile:
-            pickle.dump(self.world, outfile)
+            pickle.dump(self, outfile)
 
     def hit_test(self, position: Vector, vector: Vector,
                  max_distance: int=8) -> tuple:
-        """ Line of sight search from current position. If a block is
+        """Line of sight search from current position. If a block is
         intersected it is returned, along with the block previously in the line
         of sight. If no block is found, return None, None.
         """
@@ -89,55 +91,11 @@ class Model(object):
         previous = None
         for _ in range(max_distance * m):
             key = normalize((x, y, z))
-            if key != previous and key in self.world:
+            if key != previous and key in self:
                 return key, previous
             previous = key
             x, y, z = x + dx / m, y + dy / m, z + dz / m
         return None, None
-
-    def check_neighbors(self, position):
-        """ Check all blocks surrounding `position` and ensure their visual
-        state is current. This means hiding blocks that are not exposed and
-        ensuring that all exposed blocks are shown. Usually used after a block
-        is added or removed.
-        """
-        x, y, z = position
-        for dx, dy, dz in FACES:
-            key = (x + dx, y + dy, z + dz)
-            if key not in self.world:
-                continue
-            if self.exposed(key):
-                if key not in self._shown:
-                    self.show_block(key)
-            else:
-                if key in self._shown:
-                    self.hide_block(key)
-
-    def show_block(self, position: IntVector, immediate: bool=True):
-        """ Show the block at the given `position`. This method assumes the
-        block has already been added with add_block()
-        """
-        # texture = self.world[position]
-        # if immediate:
-        self.world.place_voxel("", position)
-        # else:
-        #     self._enqueue(self._show_block, position, texture)
-
-    def hide_block(self, position: IntVector):
-        """ Hide the block at the given `position`. Hiding does not remove the
-        block from the world.
-        """
-        self._shown.pop(position).delete()
-
-    def _enqueue(self, func, *args):
-        """ Add `func` to the internal queue."""
-        self.queue.append((func, args))
-
-    def process_entire_queue(self):
-        """ Process the entire queue with no breaks."""
-        while self.queue:
-            func, args = self.queue.popleft()
-            func(*args)
 
 
 class Window(ShowBase):
@@ -177,20 +135,8 @@ class Window(ShowBase):
         # Velocity in the z (upward) direction.
         self.dz = 0
 
-        # A list of blocks the player can place. Hit num keys to cycle.
-        # self.inventory = [SOLID_BLOCK, MISSILE_BLOCK, HAZARD_BLOCK]
-
-        # The current block the user can place. Hit num keys to cycle.
-        # self.block = self.inventory[0]
-
         # Instance of the model that handles the world.
-        self.model = Model()
-
-        # The label that is displayed in the top left of the canvas.
-        # self.label = pyglet.text.Label(
-        #     '', font_name='Ubuntu', font_size=18,
-        #     x=10, y=self.height - 10, anchor_x='left', anchor_y='top',
-        #     color=(0, 0, 0, 255))
+        self.world = RoomEditor()
 
         self.build_lighting()
 
@@ -199,10 +145,11 @@ class Window(ShowBase):
         # pyglet.clock.schedule_interval(self.update, 1.0 / TICKS_PER_SEC)
         self.disableMouse()
         self.update_task = self.task_mgr.add(self.update, 'update_task')
-        self.accept('escape', self.controls.toggle_mouse_capture)
 
     def build_lighting(self):
         """Set up the lighting for the game."""
+        self.camLens.setNear(0.01)
+
         # Fog
         exp_fog = Fog("scene-wide-fog")
         exp_fog.setColor(0.0, 0.0, 0.0)
@@ -213,17 +160,17 @@ class Window(ShowBase):
         # Lights
         spotlight = Spotlight("spotlight")
         spotlight.setColor(Vec4(1, 1, 1, 1))
-        # spotlight.setShadowCaster(True, 2048, 2048)
+        spotlight.setShadowCaster(True, 2048, 2048)
         spotlight_node = self.render.attachNewNode(spotlight)
-        spotlight_node.setPos(11, 11, 11)
+        spotlight_node.setPos(9, 9, 9)
         spotlight_node.lookAt(0, 0, 0)
         self.render.setLight(spotlight_node)
 
         point = PointLight("point")
         point.setColor(Vec4(1, 1, 1, 1))
-        # point.setShadowCaster(True, 2048, 2048)
+        point.setShadowCaster(True, 2048, 2048)
         point_node = self.render.attachNewNode(point)
-        point_node.set_pos(-11, -11, -11)
+        point_node.set_pos(-9, -9, -9)
         self.render.setLight(point_node)
 
         ambient_light = AmbientLight("ambientLight")
@@ -297,6 +244,23 @@ class Window(ShowBase):
         """Private implementation of the `update()` method. This is where most
         of the motion logic lives, along with gravity and collision detection.
         """
+        # Check input
+        self.strafe = [0, 0]
+        if self.controls.key_pressed(ActionKey.Left):
+            self.strafe[1] = -1
+        elif self.controls.key_pressed(ActionKey.Right):
+            self.strafe[1] = 1
+        if self.controls.key_pressed(ActionKey.Up):
+            self.strafe[0] = 1
+        elif self.controls.key_pressed(ActionKey.Down):
+            self.strafe[0] = -1
+
+        if self.controls.key_pressed(ActionKey.Jump):
+            if self.dz == 0:
+                self.dz = JUMP_SPEED
+        if self.controls.key_pressed(ActionKey.Fly):
+            self.flying = not self.flying
+
         # walking
         speed = FLYING_SPEED if self.flying else WALKING_SPEED
         d = dt * speed  # distance covered this tick.
@@ -313,8 +277,7 @@ class Window(ShowBase):
             dz += self.dz * dt
         # collisions
         x, y, z = self.position
-        x, y, z = self.collide((x + dx, y + dy, z + dz), PLAYER_HEIGHT)  # TODO: re-add
-        self.position = (x, y, z)
+        self.position = self.collide((x + dx, y + dy, z + dz), PLAYER_HEIGHT)
 
         # Handle mouse movements
         dx, dy = 0, 0
@@ -352,11 +315,12 @@ class Window(ShowBase):
                 d = (p[i] - np[i]) * face[i]
                 if d < pad:
                     continue
+
                 for dz in range(height):  # check each height
                     op = list(np)
-                    op[1] -= dz
+                    op[2] -= dz
                     op[i] += face[i]
-                    if tuple(op) not in self.model.world:
+                    if tuple(op) not in self.world:
                         continue
                     p[i] -= (d - pad) * face[i]
                     if face == (0, 0, -1) or face == (0, 0, 1):
@@ -372,98 +336,30 @@ class Window(ShowBase):
         """
         if self.controls.mouse_captured:
             vector = self.get_sight_vector()
-            position, previous = self.model.hit_test(self.position, vector)
+            position, previous = self.world.hit_test(self.position, vector)
             # previous is the block adjacent to the touched block
             if button == mouse.RIGHT:
                 if previous:
-                    self.model.world.place_voxel("", previous)
-                    # self.model.add_block(previous, self.block)
+                    self.world.place_voxel("", previous)
             elif button == pyglet.window.mouse.LEFT and position:
-                texture = self.model.world[position]
+                texture = self.world[position]
                 if texture != BOUNDARY_BLOCK:
-                    self.model.world.remove_voxel(position)
+                    self.world.remove_voxel(position)
         else:
             self.controls.toggle_mouse_capture()
-
-    def on_key_press(self, symbol: int, modifiers: int):
-        """ Called when the player presses a key. See pyglet docs for key
-        mappings.
-        """
-        if symbol == key.W:
-            self.strafe[0] -= 1
-        elif symbol == key.S:
-            self.strafe[0] += 1
-        elif symbol == key.A:
-            self.strafe[1] -= 1
-        elif symbol == key.D:
-            self.strafe[1] += 1
-        elif symbol == key.SPACE:
-            if self.dz == 0:
-                self.dz = JUMP_SPEED
-        elif symbol == key.TAB:
-            self.flying = not self.flying
-        elif symbol == key.ENTER:
-            self.model.save()
-        elif symbol in self.num_keys:
-            index = (symbol - self.num_keys[0]) % len(self.inventory)
-            self.block = self.inventory[index]
-
-    def on_key_release(self, symbol: int, modifiers: int):
-        """ Called when the player releases a key. See pyglet docs for key
-        mappings.
-        """
-        if symbol == key.W:
-            self.strafe[0] += 1
-        elif symbol == key.S:
-            self.strafe[0] -= 1
-        elif symbol == key.A:
-            self.strafe[1] += 1
-        elif symbol == key.D:
-            self.strafe[1] -= 1
-
-    def on_resize(self, width, height):
-        """ Called when the window is resized to a new `width` and `height`."""
-        # label
-        self.label.y = height - 10
-        # reticle
-        if self.reticle:
-            self.reticle.delete()
-        x, y = self.width // 2, self.height // 2
-        n = 10
-        self.reticle = pyglet.graphics.vertex_list(
-            4, ('v2i', (x - n, y, x + n, y, x, y - n, x, y + n)))
-
-    def on_draw(self):
-        """ Called by pyglet to draw the canvas."""
-        self.clear()
-        self.set_3d()
-        gl.glColor3d(1, 1, 1)
-        self.model.batch.draw()
-        self.draw_focused_block()
-        self.set_2d()
-        self.draw_label()
-        self.draw_reticle()
 
     def draw_focused_block(self):
         """ Draw black edges around the block that is currently under the
         crosshairs.
         """
         vector = self.get_sight_vector()
-        block = self.model.hit_test(self.position, vector)[0]
+        block = self.world.hit_test(self.position, vector)[0]
         if block:
             vertex_data = cube_vertices(block, 0.51)
             gl.glColor3d(0, 0, 0)
             gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_LINE)
             pyglet.graphics.draw(24, gl.GL_QUADS, ('v3f/static', vertex_data))
             gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
-
-    def draw_label(self):
-        """ Draw the label in the top left of the screen."""
-        x, y, z = self.position
-        self.label.text = f'{round(pyglet.clock.get_fps())} ' \
-                          f'({int(x)}, {int(y)}, {int(z)}) ' \
-                          f'{len(self.model._shown)} / {len(self.model.world)}'
-        self.label.draw()
 
     def draw_reticle(self):
         """ Draw the crosshairs in the center of the screen."""
