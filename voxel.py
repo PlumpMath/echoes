@@ -137,8 +137,10 @@ class VoxelWorld:
             self._normal_w.addData3f(*v)
         for tex in make_texcoords():
             self._texcoord_w.addData2f(*tex)
+        # TODO: Optimize make_indices by combining similar points across voxels
         for i in make_indices(start=voxel.index):
             self._prim.addVertex(i)
+            self._prim.modifyVertices()
 
 
 def make_vertices(position: Vec3D) -> Tuple:

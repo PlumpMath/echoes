@@ -5,7 +5,6 @@ from weakref import proxy
 
 from direct.showbase import ShowBase
 from panda3d.core import ButtonMap
-from panda3d.core import KeyboardButton
 from panda3d.core import WindowProperties
 
 
@@ -25,6 +24,7 @@ class FPSControls:
     usable format.
     """
     __captured = False  # internal tracking of mouse capture state
+    flying = False
 
     def __init__(self, base: ShowBase):
         self.base = proxy(base)
@@ -33,12 +33,12 @@ class FPSControls:
 
         # Register keystrokes.
         self.base.accept(ActionKey.Menu, self.toggle_mouse_capture)
+        self.base.accept(ActionKey.Fly, self.toggle_fly)
 
+    # noinspection PyArgumentList
     def key_pressed(self, key: ActionKey) -> bool:
         """Returns True if the key bound to the action is currently pressed."""
         button = self.__keymap.get_mapped_button(key)
-        # noinspection PyCallByClass,PyTypeChecker
-        # button = KeyboardButton.asciiKey(key.value.encode())  # TODO: non-ascii?
         return self.base.mouseWatcherNode.is_button_down(button)
 
     # TODO: Probably remove the property here.
@@ -59,5 +59,9 @@ class FPSControls:
         self.__captured = value
 
     def toggle_mouse_capture(self):
-        """Toggle the capture state of the mouse"""
+        """Toggle the capture state of the mouse."""
         self.mouse_captured = not self.mouse_captured
+
+    def toggle_fly(self):
+        """Toggle the player's fly state."""
+        self.flying = not self.flying

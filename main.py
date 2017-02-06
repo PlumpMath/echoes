@@ -8,6 +8,7 @@ from direct.showbase.ShowBase import ShowBase, Fog, Spotlight, Vec4, \
     AmbientLight, PointLight, Vec2D
 from direct.task import Task
 from panda3d.core import Vec3D
+from characters import Character
 import voxel
 
 # Typing convenience
@@ -105,35 +106,13 @@ class Window(ShowBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.controls = FPSControls(self)
+        self.player = Character(Vec3D(0, 0, 0), Vec2D(0, 0))
 
-        # When flying gravity has no effect and speed is increased.
-        self.flying = False
-
-        # Strafing is moving lateral to the direction you are facing,
-        # e.g. moving to the left or right while continuing to face forward.
-        #
-        # First element is -1 when moving forward, 1 when moving back, and 0
-        # otherwise. The second element is -1 when moving left, 1 when moving
-        # right, and 0 otherwise.
+        # TODO: Move into controls
         self.strafe = [0, 0]
-
-        # Current (x, y, z) position in the world, specified with floats. Note
-        # that, perhaps unlike in math class, the y-axis is the vertical axis.
-        self.position = Vec3D(0, 0, 0)
-
-        # First element is rotation of the player in the x-z plane (ground
-        # plane) measured from the z-axis down. The second is the rotation
-        # angle from the ground plane up. Rotation is in degrees.
-        #
-        # The vertical plane rotation ranges from -90 (looking straight down) to
-        # 90 (looking straight up). The horizontal rotation range is unbounded.
-        self.rotation = Vec2D(0, 0)
 
         # The crosshairs at the center of the screen.
         self.reticle = None
-
-        # Velocity in the z (upward) direction.
-        self.dz = 0
 
         # Instance of the model that handles the world.
         self.world = RoomEditor()
@@ -184,7 +163,7 @@ class Window(ShowBase):
         """ Returns the current line of sight vector indicating the direction
         the player is looking.
         """
-        x, y = self.rotation
+        x, y = self.player.rotation
         # y ranges from -90 to 90, or -pi/2 to pi/2, so m ranges from 0 to 1 and
         # is 1 when looking ahead parallel to the ground and 0 when looking
         # straight up or down.
@@ -201,11 +180,11 @@ class Window(ShowBase):
         player.
         """
         if any(self.strafe):
-            x, z = self.rotation
+            x, z = self.player.rotation
             strafe = math.degrees(math.atan2(*self.strafe))
             z_angle = math.radians(z)
             x_angle = math.radians(x + strafe)
-            if self.flying:
+            if self.controls.flying:
                 m = math.cos(z_angle)
                 dz = math.sin(z_angle)
                 if self.strafe[1]:
@@ -256,28 +235,26 @@ class Window(ShowBase):
             self.strafe[0] = -1
 
         if self.controls.key_pressed(ActionKey.Jump):
-            if self.dz == 0:
-                self.dz = JUMP_SPEED
-        if self.controls.key_pressed(ActionKey.Fly):
-            self.flying = not self.flying
+            if self.player.dz == 0:
+                self.player.dz = JUMP_SPEED
 
         # walking
-        speed = FLYING_SPEED if self.flying else WALKING_SPEED
+        speed = FLYING_SPEED if self.controls.flying else WALKING_SPEED
         d = dt * speed  # distance covered this tick.
         dx, dy, dz = self.get_motion_vector()
         # New position in space, before accounting for gravity.
         dx, dy, dz = dx * d, dy * d, dz * d
         # gravity
-        if not self.flying:
+        if not self.controls.flying:
             # Update your vertical speed: if you are falling, speed up until you
             # hit terminal velocity; if you are jumping, slow down until you
             # start falling.
-            self.dz -= dt * GRAVITY
-            self.dz = max(self.dz, -TERMINAL_VELOCITY)
-            dz += self.dz * dt
+            self.player.dz -= dt * GRAVITY
+            self.player.dz = max(self.player.dz, -TERMINAL_VELOCITY)
+            dz += self.player.dz * dt
         # collisions
-        x, y, z = self.position
-        self.position = self.collide((x + dx, y + dy, z + dz), PLAYER_HEIGHT)
+        x, y, z = self.player.position
+        self.player.position = self.collide((x + dx, y + dy, z + dz), PLAYER_HEIGHT)
 
         # Handle mouse movements
         dx, dy = 0, 0
@@ -289,12 +266,12 @@ class Window(ShowBase):
             self.previous_mouse = x, y
 
         # update the camera
-        self.camera.setPos(*self.position)
-        self.rotation[0] -= dx * 60
-        self.rotation[1] += dy * 60
+        self.camera.setPos(*self.player.position)
+        self.player.rotation[0] -= dx * 60
+        self.player.rotation[1] += dy * 60
         # Clamp to (-pi, pi)
-        self.rotation[1] = min(max(-90, self.rotation[1]), 90)
-        self.camera.setHpr(self.rotation[0], self.rotation[1], 0)
+        self.player.rotation[1] = min(max(-90, self.player.rotation[1]), 90)
+        self.camera.setHpr(self.player.rotation[0], self.player.rotation[1], 0)
 
     def collide(self, position: Vector, height: float) -> Vector:
         """ Checks to see if the player at the given `position` and `height`
@@ -326,7 +303,7 @@ class Window(ShowBase):
                     if face == (0, 0, -1) or face == (0, 0, 1):
                         # You are colliding with the ground or ceiling, so stop
                         # falling / rising.
-                        self.dz = 0
+                        self.player.dz = 0
                     break
         return tuple(p)
 
@@ -336,7 +313,7 @@ class Window(ShowBase):
         """
         if self.controls.mouse_captured:
             vector = self.get_sight_vector()
-            position, previous = self.world.hit_test(self.position, vector)
+            position, previous = self.world.hit_test(self.player.position, vector)
             # previous is the block adjacent to the touched block
             if button == mouse.RIGHT:
                 if previous:
@@ -353,7 +330,7 @@ class Window(ShowBase):
         crosshairs.
         """
         vector = self.get_sight_vector()
-        block = self.world.hit_test(self.position, vector)[0]
+        block = self.world.hit_test(self.player.position, vector)[0]
         if block:
             vertex_data = cube_vertices(block, 0.51)
             gl.glColor3d(0, 0, 0)
