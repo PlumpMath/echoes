@@ -11,40 +11,23 @@ from panda3d.core import Vec3D
 from characters import Character
 import voxel
 
-# Typing convenience
-from fps_controls import FPSControls, ActionKey
+from fps_controls import FPSControls
 
-Vector = (float, float, float)
-IntVector = (int, int, int)
 
-TICKS_PER_SEC = 60
-WALKING_SPEED = 5
-FLYING_SPEED = 15
-GRAVITY = 20.0
-MAX_JUMP_HEIGHT = 5.0
-JUMP_SPEED = math.sqrt(2 * GRAVITY * MAX_JUMP_HEIGHT)
-TERMINAL_VELOCITY = 50
-PLAYER_HEIGHT = 2
-TEXTURE_PATH = 'texture.png'
 BOUNDARY_BLOCK = None
-
-
-def normalize(position: Vector) -> IntVector:
-    """ Accepts `position` of arbitrary precision and returns the block
-    containing that position.
-    """
-    x, y, z = position
-    x, y, z = (int(round(x)), int(round(y)), int(round(z)))
-    return x, y, z
 
 
 class RoomEditor(voxel.VoxelWorld):
     """A drawable object."""
     filepath = "untitled.pkl"
 
-    def __init__(self):
+    def __init__(self, window):
         super().__init__()
         self.load()
+        controls = FPSControls(window)
+        self.players = [
+            Character(controls, Vec3D(0, 0, 0), Vec2D(0, 0))
+        ]
 
     def _create_boundary_blocks(self) -> None:
         n = 10  # 1/2 width and height of world
@@ -61,6 +44,44 @@ class RoomEditor(voxel.VoxelWorld):
                 if x in (-n, n) or z in (-n, n):
                     for dy in range(-n, n + 1):
                         self.place_voxel(BOUNDARY_BLOCK, Vec3D(x, dy, z))
+
+    def update(self, dt):
+        for player in self.players:
+            player.update(dt, self)
+
+    def collide(self, character: Character, position: Vec3D, height: float) -> Vec3D:
+        """ Checks to see if the player at the given `position` and `height`
+        is colliding with any blocks in the world and returns the new position.
+        """
+        # How much overlap with a dimension of a surrounding block you need to
+        # have to count as a collision. If 0, touching terrain at all counts as
+        # a collision. If .49, you sink into the ground, as if walking through
+        # tall grass. If >= .5, you'll fall through the ground.
+        pad = 0.25
+        p = list(position)
+        np = voxel.normalize(position)
+        for face in voxel.UNIT_VECTORS:  # check all surrounding blocks
+            for i in range(3):  # check each dimension independently
+                if not face[i]:
+                    continue
+                # How much overlap you have with this dimension.
+                d = (p[i] - np[i]) * face[i]
+                if d < pad:
+                    continue
+
+                for dz in range(height):  # check each height
+                    op = list(np)
+                    op[2] -= dz
+                    op[i] += face[i]
+                    if tuple(op) not in self:
+                        continue
+                    p[i] -= (d - pad) * face[i]
+                    if face == (0, 0, -1) or face == (0, 0, 1):
+                        # You are colliding with the ground or ceiling, so stop
+                        # falling / rising.
+                        character.dz = 0
+                    break
+        return Vec3D(*p)
 
     def load(self) -> None:
         """ Initialize the world by placing all the blocks."""
@@ -80,7 +101,7 @@ class RoomEditor(voxel.VoxelWorld):
         with open(self.filepath, 'wb') as outfile:
             pickle.dump(self, outfile)
 
-    def hit_test(self, position: Vector, vector: Vector,
+    def hit_test(self, position: Vec3D, vector: Vec3D,
                  max_distance: int=8) -> tuple:
         """Line of sight search from current position. If a block is
         intersected it is returned, along with the block previously in the line
@@ -91,7 +112,7 @@ class RoomEditor(voxel.VoxelWorld):
         dx, dy, dz = vector
         previous = None
         for _ in range(max_distance * m):
-            key = normalize((x, y, z))
+            key = voxel.normalize(position)
             if key != previous and key in self:
                 return key, previous
             previous = key
@@ -105,8 +126,6 @@ class Window(ShowBase):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.controls = FPSControls(self)
-        self.player = Character(Vec3D(0, 0, 0), Vec2D(0, 0))
 
         # TODO: Move into controls
         self.strafe = [0, 0]
@@ -115,7 +134,7 @@ class Window(ShowBase):
         self.reticle = None
 
         # Instance of the model that handles the world.
-        self.world = RoomEditor()
+        self.world = RoomEditor(self)
 
         self.build_lighting()
 
@@ -159,7 +178,7 @@ class Window(ShowBase):
         # Enable the shader generator for the receiving nodes
         self.render.setShaderAuto()
 
-    def get_sight_vector(self) -> Vector:
+    def get_sight_vector(self) -> Vec3D:
         """ Returns the current line of sight vector indicating the direction
         the player is looking.
         """
@@ -173,139 +192,14 @@ class Window(ShowBase):
         dx = math.cos(math.radians(x - 90)) * m
         dy = math.sin(math.radians(x - 90)) * m
         dz = math.sin(math.radians(y))
-        return dx, dy, dz
-
-    def get_motion_vector(self) -> Vector:
-        """ Returns the current motion vector indicating the velocity of the
-        player.
-        """
-        if any(self.strafe):
-            x, z = self.player.rotation
-            strafe = math.degrees(math.atan2(*self.strafe))
-            z_angle = math.radians(z)
-            x_angle = math.radians(x + strafe)
-            if self.controls.flying:
-                m = math.cos(z_angle)
-                dz = math.sin(z_angle)
-                if self.strafe[1]:
-                    # Moving left or right.
-                    dz = 0.0
-                    m = 1
-                if self.strafe[0] > 0:
-                    # Moving backwards.
-                    dz *= -1
-                # When you are flying up or down, you have less left and right
-                # motion.
-                dx = math.cos(x_angle) * m
-                dy = math.sin(x_angle) * m
-            else:
-                dx = math.cos(x_angle)
-                dy = math.sin(x_angle)
-                dz = 0.0
-        else:
-            dy = 0.0
-            dx = 0.0
-            dz = 0.0
-        return dx, dy, dz
+        return Vec3D(dx, dy, dz)
 
     def update(self, task: Task):
         """Once per frame, we update the player physics."""
         # noinspection PyUnresolvedReferences
         dt = globalClock.getDt()
-        # Use 8 steps to be somewhat continuous or something lame like that.
-        m = 8
-        dt = min(dt, 0.2)
-        for _ in range(m):
-            self._update(dt / m)
+        self.world.update(dt)
         return task.cont
-
-    def _update(self, dt: float) -> None:
-        """Private implementation of the `update()` method. This is where most
-        of the motion logic lives, along with gravity and collision detection.
-        """
-        # Check input
-        self.strafe = [0, 0]
-        if self.controls.key_pressed(ActionKey.Left):
-            self.strafe[1] = -1
-        elif self.controls.key_pressed(ActionKey.Right):
-            self.strafe[1] = 1
-        if self.controls.key_pressed(ActionKey.Up):
-            self.strafe[0] = 1
-        elif self.controls.key_pressed(ActionKey.Down):
-            self.strafe[0] = -1
-
-        if self.controls.key_pressed(ActionKey.Jump):
-            if self.player.dz == 0:
-                self.player.dz = JUMP_SPEED
-
-        # walking
-        speed = FLYING_SPEED if self.controls.flying else WALKING_SPEED
-        d = dt * speed  # distance covered this tick.
-        dx, dy, dz = self.get_motion_vector()
-        # New position in space, before accounting for gravity.
-        dx, dy, dz = dx * d, dy * d, dz * d
-        # gravity
-        if not self.controls.flying:
-            # Update your vertical speed: if you are falling, speed up until you
-            # hit terminal velocity; if you are jumping, slow down until you
-            # start falling.
-            self.player.dz -= dt * GRAVITY
-            self.player.dz = max(self.player.dz, -TERMINAL_VELOCITY)
-            dz += self.player.dz * dt
-        # collisions
-        x, y, z = self.player.position
-        self.player.position = self.collide((x + dx, y + dy, z + dz), PLAYER_HEIGHT)
-
-        # Handle mouse movements
-        dx, dy = 0, 0
-        if self.mouseWatcherNode.hasMouse() and self.controls.mouse_captured:
-            x = self.mouseWatcherNode.getMouseX()
-            y = self.mouseWatcherNode.getMouseY()
-            dx = x - self.previous_mouse[0]
-            dy = y - self.previous_mouse[1]
-            self.previous_mouse = x, y
-
-        # update the camera
-        self.camera.setPos(*self.player.position)
-        self.player.rotation[0] -= dx * 60
-        self.player.rotation[1] += dy * 60
-        # Clamp to (-pi, pi)
-        self.player.rotation[1] = min(max(-90, self.player.rotation[1]), 90)
-        self.camera.setHpr(self.player.rotation[0], self.player.rotation[1], 0)
-
-    def collide(self, position: Vector, height: float) -> Vector:
-        """ Checks to see if the player at the given `position` and `height`
-        is colliding with any blocks in the world and returns the new position.
-        """
-        # How much overlap with a dimension of a surrounding block you need to
-        # have to count as a collision. If 0, touching terrain at all counts as
-        # a collision. If .49, you sink into the ground, as if walking through
-        # tall grass. If >= .5, you'll fall through the ground.
-        pad = 0.25
-        p = list(position)
-        np = normalize(position)
-        for face in voxel.UNIT_VECTORS:  # check all surrounding blocks
-            for i in range(3):  # check each dimension independently
-                if not face[i]:
-                    continue
-                # How much overlap you have with this dimension.
-                d = (p[i] - np[i]) * face[i]
-                if d < pad:
-                    continue
-
-                for dz in range(height):  # check each height
-                    op = list(np)
-                    op[2] -= dz
-                    op[i] += face[i]
-                    if tuple(op) not in self.world:
-                        continue
-                    p[i] -= (d - pad) * face[i]
-                    if face == (0, 0, -1) or face == (0, 0, 1):
-                        # You are colliding with the ground or ceiling, so stop
-                        # falling / rising.
-                        self.player.dz = 0
-                    break
-        return tuple(p)
 
     def on_mouse_press(self, x: int, y: int, button: int, modifiers: int):
         """ Called when a mouse button is pressed. See pyglet docs for button
@@ -337,11 +231,6 @@ class Window(ShowBase):
             gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_LINE)
             pyglet.graphics.draw(24, gl.GL_QUADS, ('v3f/static', vertex_data))
             gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
-
-    def draw_reticle(self):
-        """ Draw the crosshairs in the center of the screen."""
-        gl.glColor3d(0, 0, 0)
-        self.reticle.draw(gl.GL_LINES)
 
 
 def main():

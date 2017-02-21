@@ -11,6 +11,7 @@ from panda3d.core import GeomVertexWriter
 from panda3d.core import SamplerState
 from panda3d.core import Vec3D
 
+from characters import Character
 
 CUBE_SIZE = 1.0
 UNIT_VECTORS = [
@@ -21,6 +22,14 @@ UNIT_VECTORS = [
     (0, 0, 1),
     (0, 0, -1),
 ]
+
+
+def normalize(position: Vec3D) -> Vec3D:
+    """ Accepts `position` of arbitrary precision and returns the block
+    containing that position.
+    """
+    x, y, z = position
+    return Vec3D(int(round(x)), int(round(y)), int(round(z)))
 
 
 class Voxel:
