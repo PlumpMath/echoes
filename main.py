@@ -5,14 +5,18 @@ import pickle
 
 import tqdm
 from direct.showbase.ShowBase import ShowBase, Fog, Spotlight, Vec4, \
-    AmbientLight, PointLight, Vec2D
+    AmbientLight, PointLight, Vec2D, Vec3
 from direct.task import Task
+from panda3d.bullet import BulletBoxShape
+from panda3d.bullet import BulletDebugNode
+from panda3d.bullet import BulletRigidBodyNode
 from panda3d.core import Vec3D
+from panda3d.bullet import BulletWorld, BulletTriangleMesh, BulletTriangleMeshShape
 from characters import Character
 import voxel
 
 from fps_controls import FPSControls
-
+from panda_utils import MouseRayPicker
 
 BOUNDARY_BLOCK = None
 
@@ -23,10 +27,21 @@ class RoomEditor(voxel.VoxelWorld):
 
     def __init__(self, window):
         super().__init__()
+
+        # Initialize Physics
+        self.physics = BulletWorld()
+        self.physics.setGravity(Vec3(0, 0, -9.81))
+
+        # Load stuff
         self.load()
+
+        # Match the physics to the loaded model
+        self.generate_physics()
+
+        # Add players
         controls = FPSControls(window)
         self.players = [
-            Character(controls, Vec3D(0, 0, 0), Vec2D(0, 0))
+            Character(self, controls, Vec3D(0, 0, 0), Vec2D(0, 0))
         ]
 
     def _create_boundary_blocks(self) -> None:
@@ -48,40 +63,7 @@ class RoomEditor(voxel.VoxelWorld):
     def update(self, dt):
         for player in self.players:
             player.update(dt, self)
-
-    def collide(self, character: Character, position: Vec3D, height: float) -> Vec3D:
-        """ Checks to see if the player at the given `position` and `height`
-        is colliding with any blocks in the world and returns the new position.
-        """
-        # How much overlap with a dimension of a surrounding block you need to
-        # have to count as a collision. If 0, touching terrain at all counts as
-        # a collision. If .49, you sink into the ground, as if walking through
-        # tall grass. If >= .5, you'll fall through the ground.
-        pad = 0.25
-        p = list(position)
-        np = voxel.normalize(position)
-        for face in voxel.UNIT_VECTORS:  # check all surrounding blocks
-            for i in range(3):  # check each dimension independently
-                if not face[i]:
-                    continue
-                # How much overlap you have with this dimension.
-                d = (p[i] - np[i]) * face[i]
-                if d < pad:
-                    continue
-
-                for dz in range(height):  # check each height
-                    op = list(np)
-                    op[2] -= dz
-                    op[i] += face[i]
-                    if tuple(op) not in self:
-                        continue
-                    p[i] -= (d - pad) * face[i]
-                    if face == (0, 0, -1) or face == (0, 0, 1):
-                        # You are colliding with the ground or ceiling, so stop
-                        # falling / rising.
-                        character.dz = 0
-                    break
-        return Vec3D(*p)
+        self.physics.doPhysics(dt)
 
     def load(self) -> None:
         """ Initialize the world by placing all the blocks."""
@@ -119,6 +101,27 @@ class RoomEditor(voxel.VoxelWorld):
             x, y, z = x + dx / m, y + dy / m, z + dz / m
         return None, None
 
+    def generate_physics(self):
+        mesh = BulletTriangleMesh()
+        mesh.add_geom(self._geom)
+        shape = BulletTriangleMeshShape(mesh, dynamic=True)
+        node = BulletRigidBodyNode('Ground')
+        node.addShape(shape)
+        np = render.attachNewNode(node)
+        np.setPos(0, 0, 0)
+        self.physics_np = np
+        self.physics.attachRigidBody(node)
+
+        # Show debug rendering
+        # debugNode = BulletDebugNode('Debug')
+        # debugNode.showWireframe(True)
+        # debugNode.showConstraints(False)
+        # debugNode.showBoundingBoxes(False)
+        # debugNode.showNormals(False)
+        # debugNP = render.attachNewNode(debugNode)
+        # debugNP.show()
+        # self.physics.setDebugNode(debugNP.node())
+
 
 class Window(ShowBase):
     """Implement the code that creates the window."""
@@ -127,22 +130,42 @@ class Window(ShowBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # TODO: Move into controls
-        self.strafe = [0, 0]
-
         # The crosshairs at the center of the screen.
         self.reticle = None
 
         # Instance of the model that handles the world.
         self.world = RoomEditor(self)
 
+        # Lighting
         self.build_lighting()
+
+        # Get the mouse picker
+        self.mouse_picker = MouseRayPicker(debug=True)
 
         # This call schedules the `update()` method to be called
         # TICKS_PER_SEC. This is the main game event loop.
         # pyglet.clock.schedule_interval(self.update, 1.0 / TICKS_PER_SEC)
-        self.disableMouse()
         self.update_task = self.task_mgr.add(self.update, 'update_task')
+        self.accept('mouse1', self.drop_box)
+
+    def drop_box(self):
+        point = self.mouse_picker.from_mouse(
+            # Only include the ground
+            # condition=lambda o: o.getName() == 'Plane'
+        )
+        if not point:
+            return
+
+        shape = BulletBoxShape(Vec3(0.5, 0.5, 0.5))
+        node = BulletRigidBodyNode('Box')
+        node.setMass(1.0)
+        node.addShape(shape)
+        np = render.attachNewNode(node)
+        np.setPos(point)
+        self.world.physics.attachRigidBody(node)
+        model = loader.loadModel('models/box.egg')
+        model.flattenLight()
+        model.reparentTo(np)
 
     def build_lighting(self):
         """Set up the lighting for the game."""

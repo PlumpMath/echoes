@@ -5,6 +5,7 @@ from weakref import proxy
 
 from direct.showbase import ShowBase
 from panda3d.core import ButtonMap
+from panda3d.core import Vec2D
 from panda3d.core import WindowProperties
 
 
@@ -33,10 +34,23 @@ class FPSControls:
 
         self.__keymap: ButtonMap = base.win.get_keyboard_map()
         self.mouse_captured = True
+        self.base.disableMouse()
 
         # Register keystrokes.
         self.base.accept(ActionKey.Menu, self.toggle_mouse_capture)
         self.base.accept(ActionKey.Fly, self.toggle_fly)
+
+    def get_movement_direction(self):
+        movement = [0, 0]
+        if self.key_pressed(ActionKey.Left):
+            movement[1] = -1
+        elif self.key_pressed(ActionKey.Right):
+            movement[1] = 1
+        if self.key_pressed(ActionKey.Up):
+            movement[0] = 1
+        elif self.key_pressed(ActionKey.Down):
+            movement[0] = -1
+        return movement
 
     # noinspection PyArgumentList
     def key_pressed(self, key: ActionKey) -> bool:

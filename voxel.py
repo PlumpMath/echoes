@@ -11,7 +11,6 @@ from panda3d.core import GeomVertexWriter
 from panda3d.core import SamplerState
 from panda3d.core import Vec3D
 
-from characters import Character
 
 CUBE_SIZE = 1.0
 UNIT_VECTORS = [
