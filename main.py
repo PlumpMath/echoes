@@ -11,12 +11,13 @@ from panda3d.bullet import BulletBoxShape
 from panda3d.bullet import BulletDebugNode
 from panda3d.bullet import BulletRigidBodyNode
 from panda3d.core import Vec3D
-from panda3d.bullet import BulletWorld, BulletTriangleMesh, BulletTriangleMeshShape
+from panda3d.bullet import BulletWorld, BulletTriangleMesh, \
+    BulletTriangleMeshShape
 from characters import Character
 import voxel
 
 from fps_controls import FPSControls
-from panda_utils import MouseRayPicker
+from panda_utils import ReticleVoxelPicker
 
 BOUNDARY_BLOCK = None
 
@@ -139,8 +140,8 @@ class Window(ShowBase):
         # Lighting
         self.build_lighting()
 
-        # Get the mouse picker
-        self.mouse_picker = MouseRayPicker(debug=True)
+        # Get the picker
+        self.picker = ReticleVoxelPicker(debug=True)
 
         # This call schedules the `update()` method to be called
         # TICKS_PER_SEC. This is the main game event loop.
@@ -149,10 +150,8 @@ class Window(ShowBase):
         self.accept('mouse1', self.drop_box)
 
     def drop_box(self):
-        point = self.mouse_picker.from_mouse(
-            # Only include the ground
-            # condition=lambda o: o.getName() == 'Plane'
-        )
+        prev_pos, next_pos = self.picker.from_reticle()
+        point = prev_pos
         if not point:
             return
 
