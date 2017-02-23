@@ -115,7 +115,8 @@ class VoxelWorld:
 
     def remove_voxel(self, position: Vec3D) -> None:
         """Remove the voxel at the given position."""
-        # TODO:
+        # TODO: Implement me
+
         # del self.world[position]
         # if position in self._shown:
         #     self.hide_block(position)

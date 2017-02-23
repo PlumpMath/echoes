@@ -147,24 +147,33 @@ class Window(ShowBase):
         # TICKS_PER_SEC. This is the main game event loop.
         # pyglet.clock.schedule_interval(self.update, 1.0 / TICKS_PER_SEC)
         self.update_task = self.task_mgr.add(self.update, 'update_task')
-        self.accept('mouse1', self.drop_box)
+        self.accept('mouse1', self.add_voxel)
+        self.accept('mouse2', self.remove_voxel)
 
-    def drop_box(self):
+    def add_voxel(self):
         prev_pos, next_pos = self.picker.from_reticle()
-        point = prev_pos
-        if not point:
+        if not prev_pos:
             return
 
-        shape = BulletBoxShape(Vec3(0.5, 0.5, 0.5))
-        node = BulletRigidBodyNode('Box')
-        node.setMass(1.0)
-        node.addShape(shape)
-        np = render.attachNewNode(node)
-        np.setPos(point)
-        self.world.physics.attachRigidBody(node)
-        model = loader.loadModel('models/box.egg')
-        model.flattenLight()
-        model.reparentTo(np)
+        self.world.place_voxel(None, prev_pos)
+
+        # shape = BulletBoxShape(Vec3(0.5, 0.5, 0.5))
+        # node = BulletRigidBodyNode('Box')
+        # node.setMass(1.0)
+        # node.addShape(shape)
+        # np = render.attachNewNode(node)
+        # np.setPos(prev_pos)
+        # self.world.physics.attachRigidBody(node)
+        # model = loader.loadModel('models/box.egg')
+        # model.flattenLight()
+        # model.reparentTo(np)
+
+    def remove_voxel(self):
+        prev_pos, next_pos = self.picker.from_reticle()
+        if not next_pos:
+            return
+
+        self.world.remove_voxel(next_pos)
 
     def build_lighting(self):
         """Set up the lighting for the game."""
@@ -240,19 +249,6 @@ class Window(ShowBase):
                     self.world.remove_voxel(position)
         else:
             self.controls.toggle_mouse_capture()
-
-    def draw_focused_block(self):
-        """ Draw black edges around the block that is currently under the
-        crosshairs.
-        """
-        vector = self.get_sight_vector()
-        block = self.world.hit_test(self.player.position, vector)[0]
-        if block:
-            vertex_data = cube_vertices(block, 0.51)
-            gl.glColor3d(0, 0, 0)
-            gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_LINE)
-            pyglet.graphics.draw(24, gl.GL_QUADS, ('v3f/static', vertex_data))
-            gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
 
 
 def main():
